@@ -4,6 +4,8 @@
 
 This phase produced the actual solution/project skeleton (D1 territory per CLAUDE.md's implementation sequence) because Stage C+ requires a real, deployable `Atmos.Web` rather than a disposable throwaway — see Phase B §19. No forecast features were built; this is deliberately still a minimal skeleton (default Razor Pages template + `RecentSearch`/`AtmosDbContext` + a health check). Feature work starts in Phase D.
 
+**See also:** [`docs/manual-deployment-walkthrough.md`](./manual-deployment-walkthrough.md) covers the same IIS/SQL Server/app-pool ground as a didactic, step-by-step guide for deploying to a fresh VM by hand — useful both as a learning companion to the automated steps below and as a way to sanity-check this document against a from-scratch deployment.
+
 ---
 
 ## Environment inventory

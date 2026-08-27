@@ -756,6 +756,8 @@ ASP.NET Core 10
 
 Use the ASP.NET Core Hosting Bundle on the Windows Server host.
 
+For a step-by-step, didactic walkthrough of every piece of this — enabling IIS, installing the Hosting Bundle, standing up SQL Server, creating the application pool and site, and the `web.config` environment-variable pattern below — see [`docs/manual-deployment-walkthrough.md`](./docs/manual-deployment-walkthrough.md). It also documents which of these steps this project's own automated deployment (`docs/phase-c-build-environment.md`) has actually exercised versus standard guidance never yet run against a truly blank VM.
+
 Publish using:
 
 ```shell
@@ -1214,6 +1216,8 @@ The README should explain:
 Architecture documentation should explain the major design decisions.
 
 Deployment documentation should explain IIS and SQL Server deployment.
+
+`DEPLOYMENT.md` doesn't exist yet. Until it's written, [`docs/manual-deployment-walkthrough.md`](./docs/manual-deployment-walkthrough.md) (a didactic, step-by-step manual deployment guide, written for learning IIS/SQL Server deployment by hand on a fresh VM) and [`docs/phase-c-build-environment.md`](./docs/phase-c-build-environment.md) (the automated equivalent, run via WinRM) cover this ground and should inform it rather than be discarded once it exists.
 
 ---
 
