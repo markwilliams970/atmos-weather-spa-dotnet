@@ -301,7 +301,7 @@ Errors (all endpoints) -> ApiErrorResponse { string Error }
     "OpenMeteoAirQuality": "https://air-quality-api.open-meteo.com",
     "Overpass": "https://overpass-api.de",
     "Nominatim": "https://nominatim.openstreetmap.org",
-    "NominatimUserAgent": "",
+    "NominatimUserAgent": "AtmosWeather/1.0 (+https://github.com/markwilliams970/atmos-weather-spa-dotnet)",
     "RainViewer": "https://api.rainviewer.com"
   },
   "RecentSearch": { "MaxPerSession": 10 },
@@ -311,7 +311,7 @@ Errors (all endpoints) -> ApiErrorResponse { string Error }
 
 Bound to strongly-typed `Options` classes (`ExternalApiOptions`, `RecentSearchOptions`, `SessionCookieOptions`) via `Configure<T>()` — no hardcoded literals anywhere in `Atmos.Core`/`Atmos.Web` source, per CLAUDE.md §13. `ConnectionStrings:AtmosDb` is empty in source control; supplied via `appsettings.Development.json` (gitignored, LocalDB) locally and via environment-specific configuration on the Windows Server 2025 VM in Production — never committed.
 
-**Open Question:** `NominatimUserAgent` needs a real identifying value per Nominatim's usage policy (today's placeholder is `"Atmos-Weather-Demo/1.0 (learning project)"`, `weather-server.ts:373`) — what should the new deployment's User-Agent string say (app name + a real contact URL/email, per Nominatim's policy)?
+**Decision:** `NominatimUserAgent` replaces the old placeholder (`"Atmos-Weather-Demo/1.0 (learning project)"`, `weather-server.ts:373`) with `AtmosWeather/1.0 (+https://github.com/markwilliams970/atmos-weather-spa-dotnet)` — identifies the app via its public repo link, satisfying Nominatim's usage policy without publishing personal contact info in a committed config file. This is a header the *server* sends on its own outbound call to Nominatim (`INearbyPlaceService`'s fallback), unrelated to the browser.
 
 ---
 
@@ -348,11 +348,11 @@ Concrete implementation closing every Phase A §8 finding, per CLAUDE.md §17's 
 
 - **HTTPS:** `UseHttpsRedirection()` + HSTS in Production; IIS binding configured at deployment (§17/Phase E).
 - **Session cookie:** `HttpOnly=true`, `Secure=true` in Production (relaxed for local HTTP dev), `SameSite=Lax`, configurable `MaxAge` (default 365 days) — same shape as today, `Secure` added.
-- **Anti-forgery for `PUT /api/recent/units`:** the only real state-changing endpoint, called via same-origin `fetch()`. Given the worst-case impact is low (an attacker flips one victim's saved unit preference for one label — Phase A §8's own characterization), recommend a same-origin check (verify `Origin`/`Referer` against the app's own host) rather than the full ASP.NET Core antiforgery-token flow, to avoid disproportionate defense machinery for the actual risk. **Open Question:** confirm this lighter approach is acceptable, or prefer the conventional antiforgery-token flow despite the added client-side complexity of reading/sending the token on every `fetch`.
+- **Anti-forgery for `PUT /api/recent/units`:** the only real state-changing endpoint, called via same-origin `fetch()`. **Decision:** a same-origin check (verify `Origin`/`Referer` against the app's own host), not the full ASP.NET Core antiforgery-token flow — approved as proportionate to the low real-world impact (an attacker flips one victim's saved unit preference for one label — Phase A §8's own characterization).
 - **Input validation:** ZIP regex, lat/lon range + `NaN` checks, `Label` max length (200, new — closes the Phase A §5 gap where the original had no bound at all), `Units`/`LocationType` restricted to their enum values — enforced at the minimal-API handler level, mirroring today's inline checks.
 - **Output encoding:** Razor's automatic encoding for any server-rendered value; client JS keeps using `textContent` everywhere it does today, and a single tested `escapeHtml()` helper (ported from `escHtml()`) centralized in `weather.js` for the one `innerHTML` usage (the recent-item list) — same pattern, no longer inline-duplicated.
 - **SQL access:** 100% EF Core LINQ — no raw SQL string concatenation anywhere, preserving today's clean record.
-- **Nominatim User-Agent:** updated to a real identifying string (§12 Open Question).
+- **Nominatim User-Agent:** updated to `AtmosWeather/1.0 (+https://github.com/markwilliams970/atmos-weather-spa-dotnet)` (§12).
 
 ---
 
@@ -364,7 +364,7 @@ Concrete implementation closing every Phase A §8 finding, per CLAUDE.md §17's 
 | Integration | `Atmos.Web.Tests` (`WebApplicationFactory<Program>`) | Routing for all 4 pages + all 7 API endpoints, invalid-input 400s, session cookie issuance/reuse, recent-search upsert+trim end-to-end, unit-preference update via the new `PUT` endpoint, same-origin-check behavior | EF Core against the SQLite in-memory relational provider for fast CI runs; recommend a periodic/pre-deployment manual run against real SQL Server to catch any provider-specific SQL differences — a small, explicitly-acknowledged fidelity gap, not a blind spot |
 | Browser | `Atmos.Web.PlaywrightTests` (deferred to D17) | ZIP search → autocomplete → forecast render → recent selection → unit switch → map picker → map-selected forecast → radar, per Phase A's existing priority order | Not created in this phase |
 
-**Open Question:** add a GitHub Actions workflow to run `dotnet test` on every push/PR to the new repo? The original app had no CI; CLAUDE.md doesn't mandate it, but the repo is already on GitHub and the cost is low. Recommend yes, flagged since it's scope not explicitly requested.
+**Decision:** no GitHub Actions CI workflow at this time. `dotnet test` (both projects) remains a manual/local step; revisit later if desired.
 
 ---
 
@@ -416,8 +416,8 @@ ZIP/city search; debounced autocomplete; map-picker overlay UX (pan/zoom/drag/cl
 - Non-US ZIP/geocoding support (the original app's own unimplemented "Next steps" idea; not requested here).
 - Saved "favorite" locations distinct from auto-populated Recent (same — an unimplemented idea in the original, not requested).
 - A client-side JSON schema validator at the browser/server boundary — the new explicit C# DTOs (§11) already close most of the practical gap server-side; a browser-side validator adds real complexity for a small residual benefit and isn't requested.
-- GitHub Actions CI — Open Question, §16, not yet decided either way.
-- Full ASP.NET Core antiforgery-token flow for `/api/recent/units` — Open Question, §15, pending Mark's preference between that and the lighter same-origin check.
+- GitHub Actions CI — declined for now (§16); `dotnet test` stays a manual/local step.
+- Full ASP.NET Core antiforgery-token flow for `/api/recent/units` — declined in favor of the lighter same-origin check (§15).
 
 ---
 
@@ -449,6 +449,14 @@ Narrower than Phase A's six — these surfaced while designing the concrete plan
 4. **Confirm `Atmos.Core` as a third project** (§2) — a direct, near-mandatory consequence of decision #4, but CLAUDE.md's Phase B instructions still ask for explicit acknowledgment of any project beyond the original two-project sketch.
 5. **History-API/bookmarkable-`/weather`-URL navigation model** (§4) — confirm this additive UX capability (real shareable search-result URLs) is wanted, versus keeping `/weather` a pure client-state shell with no server-addressable result state, more strictly mirroring today's single-document app.
 
+### Decisions (resolved 2026-08-27)
+
+1. **Nominatim `User-Agent` string — pending final value.** Clarified that this is a header the .NET server sends on its own outbound call to Nominatim (`INearbyPlaceService`'s fallback lookup, `weather-server.ts:372-375` today) — it is unrelated to the browser/SPA, and .NET's `HttpClient` sends no default `User-Agent` for a server-to-server call to substitute in. Proposed value: `AtmosWeather/1.0 (+https://github.com/markwilliams970/atmos-weather-spa-dotnet)` — identifies the app via the public repo link rather than a personal email, since `appsettings.json` is committed to a public repo. Awaiting Mark's confirmation of this exact string before Phase C.
+2. **Anti-forgery approach — Approved.** Lightweight same-origin header check for `PUT /api/recent/units`, not the full ASP.NET Core antiforgery-token flow.
+3. **GitHub Actions CI — Declined for now.** No CI workflow at this time; `dotnet test` remains a manual/local step. Revisit later if desired.
+4. **`Atmos.Core` as a third project — Approved.**
+5. **Bookmarkable `/weather` navigation model — Approved.**
+
 ---
 
 # Phase Gate
@@ -478,22 +486,22 @@ Decisions:
   - See §18 for the full preserved/improved/removed/deferred table.
   - No feature is being removed.
 Open questions:
-  1. Nominatim User-Agent contact string.
-  2. Same-origin check vs. full antiforgery tokens for the one
-     state-changing endpoint.
-  3. Add GitHub Actions CI now or defer.
-  4. Confirm Atmos.Core as a third project.
-  5. Confirm the bookmarkable-/weather-URL navigation model.
+  All five resolved 2026-08-27 (§20 Decisions):
+  1. Nominatim User-Agent: AtmosWeather/1.0 (+repo link) — approved.
+  2. Same-origin check (not antiforgery tokens) — approved.
+  3. No GitHub Actions CI at this time — declined.
+  4. Atmos.Core as a third project — approved.
+  5. Bookmarkable /weather navigation model — approved.
 Risks:
   - Unchanged from Phase A §18 (radar/map-picker fidelity and first-time
     IIS/SQL Server deployment remain the two High-risk items; Stage C+
     exists specifically to de-risk the second one early).
 Recommended next phase:
-  Phase C — Build Environment. Once the five open questions above are
-  resolved, establish and validate the .NET SDK, project scaffolding
-  (Atmos.Core/Atmos.Web/Atmos.Cli/tests as specified in §2), SQL Server
-  connectivity, EF Core tooling, and test execution — proven with the
-  Stage C+ walking skeleton before Phase D feature work begins.
+  Phase C — Build Environment. Establish and validate the .NET SDK,
+  project scaffolding (Atmos.Core/Atmos.Web/Atmos.Cli/tests as specified
+  in §2), SQL Server connectivity, EF Core tooling, and test execution —
+  proven with the Stage C+ walking skeleton before Phase D feature work
+  begins.
 ```
 
-Phase B is complete pending resolution of the five open questions in §20. Per CLAUDE.md §24, no large-scale implementation should begin until this plan is reviewed.
+Phase B is complete. All open questions resolved 2026-08-27 (§20). Per CLAUDE.md §24, Phase C may begin.
