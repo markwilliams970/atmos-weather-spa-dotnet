@@ -17,12 +17,15 @@ This phase produced the actual solution/project skeleton (D1 territory per CLAUD
 
 **Local dev SQL Server** — SQL Server 2022 Developer Edition in Docker (`mcr.microsoft.com/mssql/server:2022-latest`), container `atmos-sql-dev`, port 1433, data in a named volume (`atmos-sql-dev-data`) so it survives container restarts. This is the fast-iteration database Phase B §16/CLAUDE.md §20 call for — not the deployment target.
 
+This was originally stood up by hand with:
 ```bash
 docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=<...>" \
   -p 1433:1433 --name atmos-sql-dev --restart unless-stopped \
   -v atmos-sql-dev-data:/var/opt/mssql \
   -d mcr.microsoft.com/mssql/server:2022-latest
 ```
+
+That one-off command is now formalized as **`scripts/lab/dev-harness-create.sh`** — idempotent (safe to re-run; leaves an already-running container alone), generates its own random `sa` password (or accepts `ATMOS_DEV_SQL_SA_PASSWORD`), waits for SQL Server to actually be ready before continuing, writes the connection string straight to User Secrets, and applies the current EF Core migration (`dotnet ef database update`) so `AtmosDb` exists with the right schema by the time it returns. `scripts/lab/dev-harness-teardown.sh` is the reverse — see that script's own comments, and `docs/manual-deployment-walkthrough.md`'s appendix, for both.
 
 The `Atmos.Web` connection string for this container is stored via **.NET User Secrets** (`dotnet user-secrets set "ConnectionStrings:AtmosDb" "..." --project src/Atmos.Web`), not in `appsettings.Development.json` — keeps the credential out of source control entirely, per CLAUDE.md §13.
 
