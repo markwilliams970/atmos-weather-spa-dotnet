@@ -523,6 +523,10 @@ Production secrets should be supplied through an appropriate configuration mecha
 
 The application currently uses keyless external APIs, but this rule must remain in place because future APIs may require credentials.
 
+The file-logging destination is one concrete example of this rule: it differs by environment (a relative `logs/` path in Development, `C:\ProgramData\atmos\logs` in Production) via `appsettings.Production.json`, never a hardcoded path in code. See [`docs/logging.md`](./docs/logging.md).
+
+Secrets specifically must not live in any `appsettings.*.json` file, including environment-specific ones checked into Git — on the IIS deployment target, supply them as environment variables in `web.config` (e.g. `ConnectionStrings__AtmosDb`) instead. See [`docs/logging.md`](./docs/logging.md)'s deployment note for why this matters: an `appsettings.Production.json` that's safe to commit and redeploy freely must never be the place a secret lives.
+
 ---
 
 ## 14. Logging and Observability
@@ -548,6 +552,20 @@ Do not log:
 Avoid silent `catch` blocks.
 
 If an exception is intentionally suppressed, explain why in code and log at an appropriate level when useful.
+
+### Preparing for Datadog APM/DBM
+
+Mark intends to add Datadog APM and Database Monitoring (DBM) instrumentation later, as a separate learning exercise. Logging must be written now in a way that makes that instrumentation cheap to add, without adding any instrumentation itself.
+
+Concretely:
+
+* Use structured logging (Serilog) with a JSON-formatted sink, not just console text.
+* Enrich log output with trace/span identifiers derived from .NET's built-in `System.Diagnostics.Activity`, so log lines within one request already correlate before any tracer exists.
+* Log at the boundaries that become spans once a tracer is attached — external API calls, database-adjacent business operations, and one rich per-request summary line — not every line of code.
+
+Do not add a Datadog package, a `DD_*` environment variable, or any exporter as part of ordinary logging work. That is a separate, deliberate task, undertaken only when explicitly requested.
+
+See [`docs/logging.md`](./docs/logging.md) for the full design and the reasoning behind it — read it before changing logging behavior.
 
 ---
 
@@ -746,13 +764,13 @@ dotnet publish --configuration Release
 
 Prefer framework-dependent deployment unless there is a concrete reason to use self-contained deployment.
 
-The generated `web.config` should normally be produced by the .NET publish process rather than manually maintained.
+The generated `web.config` should normally be produced by the .NET publish process rather than manually maintained. Because publish regenerates it from scratch every time, deployment-specific environment variables (`ASPNETCORE_ENVIRONMENT`, `ConnectionStrings__AtmosDb`) do not survive a redeploy on their own — re-adding them to `web.config`'s `<environmentVariables>` is an explicit step of every deployment to the Windows Server VM, not a one-time setup task. See [`docs/logging.md`](./docs/logging.md)'s deployment note for the exact XML and why this is the right place for the connection string secret rather than a config file.
 
 Deployment should include:
 
 * IIS site configuration
 * application pool configuration
-* filesystem permissions
+* filesystem permissions, including write access to the Production log directory (`C:\ProgramData\atmos\logs`) for the application pool identity
 * database connection configuration
 * HTTPS configuration where applicable
 * logging
