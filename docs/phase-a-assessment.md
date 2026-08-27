@@ -557,4 +557,19 @@ Decisions requiring Mark's approval:
      any change that materially affects the approved plan).
 ```
 
+---
+
+## Decisions (resolved 2026-08-27)
+
+Mark reviewed and resolved all six open items above. These decisions are final for Phase B unless explicitly revisited.
+
+1. **Search bar placement — Approved.** The search input lives in the shared layout (`_Layout.cshtml`), present on both `/` and `/weather`, not just the home page.
+2. **Map picker as page vs. overlay — Approved.** `/map` remains a secondary, deep-linkable entry point. The primary day-to-day interaction stays a same-page JS overlay launched from wherever the user is, exactly as today.
+3. **RainViewer frame lookup location — Changed from current behavior.** The RainViewer frame-metadata lookup moves server-side, behind an `IRadarService`, for consistency with every other external API call. This is the one place the .NET port deliberately does **not** preserve the current app's exact call topology (today it's a direct browser→RainViewer call) — the change is intentional and approved, not an oversight.
+4. **CLI retention — Approved.** `Atmos.Cli` is retained, sharing weather/geocoding services and domain models with `Atmos.Web` per §14.
+5. **`LocationType` column — Approved.** Included on `RecentSearch` now, matching CLAUDE.md's example schema, even though no current feature reads it yet.
+6. **Early deployment rehearsal — Approved.** The "walking skeleton" IIS/SQL Server deployment step (§19, stage "C+") is inserted into the implementation sequence immediately after Phase C, specifically to catch environmental problems (hosting bundle, app pool identity, SQL Server auth, HTTPS binding) before they get misdiagnosed as application bugs during later feature work.
+
+Phase A is closed. Proceeding to Phase B (target architecture / detailed porting plan) per CLAUDE.md §23.
+
 Phase 0 and Phase A are complete. No implementation should begin until this assessment is reviewed and the six items above are resolved, per CLAUDE.md §23/§24.
