@@ -77,9 +77,16 @@ If your fresh VM has no SQL Server at all, install **SQL Server 2022 Developer E
 - **Authentication mode:** choose **Mixed Mode** (SQL Server and Windows Authentication) during setup, and set an `sa` password when prompted. This app connects via a dedicated **SQL login** (not Windows integrated auth), so Mixed Mode is required — Windows-only auth mode won't let you create that login at all.
 - Install **SQL Server Management Studio (SSMS)** too if it's not already on the box — you'll want it for Part 3.
 
-**Verify:** open SSMS, connect to `localhost` (Windows Authentication is fine for *this* connection — you're connecting as the admin you're logged in as), and confirm you can see the instance and expand **Databases**.
+**Verify:** open SSMS, connect to `localhost` (Windows Authentication is fine for *this* connection — you're connecting as the admin you're logged in as), and confirm you can see the instance and expand **Databases**. If you're verifying an *existing* install rather than one you just set up yourself (the common case on this lab VM), also confirm Mixed Mode explicitly rather than assuming it — either **Object Explorer → right-click the server → Properties → Security** and check "SQL Server and Windows Authentication mode" is selected, or from a query window:
+```sql
+SELECT CASE SERVERPROPERTY('IsIntegratedSecurityOnly')
+  WHEN 1 THEN 'Windows-only (wrong for this app)'
+  ELSE 'Mixed (correct)'
+END AS AuthMode;
+```
+Part 3.2's `atmos_app` SQL login simply won't be able to authenticate at all if this comes back Windows-only — worth catching here rather than as a confusing login failure three parts later.
 
-> 📎 **How this project automates it:** SQL Server 2022 Developer Edition (Mixed Mode) was already installed on `win2025app` before this project touched it — never installed by this project's own automation either. If you're setting up a genuinely blank VM, the manual steps above are your primary guidance; there's no scripted equivalent in this repo to fall back on for the engine install itself.
+> 📎 **How this project automates it:** SQL Server 2022 Developer Edition (Mixed Mode) was already installed on `win2025app` before this project touched it — never installed by this project's own automation either. If you're setting up a genuinely blank VM, the manual steps above are your primary guidance; there's no scripted equivalent in this repo to fall back on for the engine install itself. `scripts/lab/vm-create.ps1` does run the exact reachability and Mixed Mode check shown above as a prerequisite before touching anything, and fails immediately with a clear message if either isn't true, rather than proceeding and failing confusingly later.
 
 ---
 
@@ -126,6 +133,8 @@ Put it somewhere sensible, e.g. `C:\inetpub\AtmosWeb` — you'll formalize this 
 
 ## Part 3 — Database setup
 
+This whole part is the manual, one-statement-at-a-time version of what `scripts/lab/vm-create.ps1`'s "SQL Server persistence layer" section (see that script's own comments) does programmatically and idempotently. Follow 3.1–3.4 as written for a **fresh** VM that has never had `AtmosDb`/`atmos_app` on it; if you're redeploying to a VM that already does, see the **"Redeploying"** callout under each step instead of the base instructions — trying to `CREATE` something that already exists is a SQL error, not a no-op, unlike the automated script.
+
 ### 3.1 Connect and create the database
 
 Open SSMS, connect to your SQL Server instance (Windows Authentication, as the admin), and create the database:
@@ -135,6 +144,8 @@ CREATE DATABASE AtmosDb;
 ```
 
 (You can do this via SSMS's Object Explorer GUI too — right-click **Databases** → **New Database** — but the one-line SQL is simpler and is exactly what happens either way.)
+
+**Redeploying?** If `AtmosDb` already exists, this errors with `Database 'AtmosDb' already exists.` — that's expected, not a problem. Skip straight to 3.2; nothing here needs to be re-run.
 
 ### 3.2 Create a dedicated, least-privilege login
 
@@ -159,6 +170,12 @@ The `CREATE TABLE`/`ALTER ON SCHEMA` grants are there because this same login wi
 
 **Write the password down somewhere you'll have it in Part 4.5** — you'll need it for the connection string.
 
+**Redeploying?** `CREATE LOGIN atmos_app` errors with `The server principal 'atmos_app' already exists.` if it's already there — reset its password instead (this is exactly what `vm-create.ps1` does on every run, so the login's password always matches whatever it's about to write into `web.config`):
+```sql
+ALTER LOGIN atmos_app WITH PASSWORD = 'YourNewPassword!1';
+```
+`CREATE USER atmos_app FOR LOGIN atmos_app` will similarly error with `User, group, or role 'atmos_app' already exists` if the database user already exists — skip that one line. The four statements after it (`ALTER ROLE ... ADD MEMBER` twice, both `GRANT`s) are all safe to re-run unconditionally: SQL Server treats adding an already-present role member, or re-granting an already-granted permission, as a harmless no-op rather than an error, so just run them again to be sure they're in place.
+
 ### 3.3 Apply the EF Core migration
 
 Per this project's own rule (CLAUDE.md §22): **no runtime `CREATE TABLE IF NOT EXISTS`-style schema magic.** Schema changes are explicit, versioned EF Core migrations, applied as a deliberate deployment step. There are two ways to actually run one:
@@ -177,11 +194,31 @@ sqlcmd -S localhost -E -d AtmosDb -i migrate.sql
 
 **Option B — no SDK anywhere handy:** you'd need to hand-write the `CREATE TABLE` statement matching the current migration. Not recommended — Option A is one command and guarantees the schema matches exactly what the app's EF Core model expects.
 
+**Redeploying?** Nothing special to do — `--idempotent` is exactly for this. Re-running `migrate.sql` against a database that already has the migration applied is a deliberate, supported no-op (it checks `__EFMigrationsHistory` and skips anything already there), so this step is identical whether it's the first time or the fifth.
+
 ### 3.4 Verify
 
 Back in SSMS, expand `AtmosDb` → **Tables** — you should see `RecentSearch` and `__EFMigrationsHistory`. Expand `RecentSearch` → **Columns** and sanity-check they look like `Id, SessionId, Label, Latitude, Longitude, ElevationMeters, Units, LocationType, CreatedUtc, LastAccessedUtc`.
 
-> 📎 **How this project automates it:** the SQL for 3.1/3.2 above is taken directly from this project's Phase C setup (`docs/phase-c-build-environment.md`, "SQL Server — dedicated least-privilege login"). For 3.3, the automation generates the same `migrate.sql` via the same `dotnet ef migrations script --idempotent` command, transfers it to the VM (via the same temporary HTTP bridge mentioned in Part 2.3), and runs it with `sqlcmd -S localhost -E -d AtmosDb -i migrate.sql` — identical to what you just did by hand.
+Then confirm the login/user/grants from 3.2 actually took — easy to get right for the database but wrong for the security setup, and a broken grant fails silently until the app actually tries to write:
+```sql
+-- Login exists at the server level:
+SELECT name, type_desc, create_date FROM sys.server_principals WHERE name = 'atmos_app';
+
+-- User exists in AtmosDb and is mapped to that login (run against AtmosDb, not master):
+SELECT name, type_desc FROM sys.database_principals WHERE name = 'atmos_app';
+
+-- Role memberships:
+SELECT r.name AS RoleName
+FROM sys.database_role_members drm
+JOIN sys.database_principals r ON drm.role_principal_id = r.principal_id
+JOIN sys.database_principals m ON drm.member_principal_id = m.principal_id
+WHERE m.name = 'atmos_app';
+-- expect two rows: db_datareader, db_datawriter
+```
+If the last query comes back empty, the `ALTER ROLE ... ADD MEMBER` statements from 3.2 didn't run (or ran against the wrong database context — double-check you switched to `AtmosDb` first, not `master`) — the login will authenticate fine but every query the app makes will fail with a permission error, which is a more confusing thing to debug from the app side than from here.
+
+> 📎 **How this project automates it:** `scripts/lab/vm-create.ps1`'s "SQL Server persistence layer" section runs the idempotent form of everything in 3.1–3.2 (the same `IF NOT EXISTS` / `CREATE-or-ALTER LOGIN...WITH PASSWORD` pattern shown in the "Redeploying?" callouts above, every time, not just on a second run) as one script via `sqlcmd -S localhost -E -i`, then applies `migrate.sql` from 3.3 as its own step. `scripts/lab/deploy-to-vm.sh` generates that `migrate.sql` with the identical `dotnet ef migrations script --idempotent` command and transfers it to the VM via the same temporary HTTP bridge mentioned in Part 2.3. The verification queries in 3.4 above are the same ones `vm-create.ps1` prints as part of its own pass/fail report at the end of a deploy.
 
 ---
 

@@ -446,6 +446,12 @@ Add-Result "SQL login '$SqlLogin'" ($loginCount.Trim() -eq '1') "sys.server_prin
 $tableCount = sqlcmd -S localhost -E -h -1 -W -d $SqlDatabase -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME IN ('RecentSearch', '__EFMigrationsHistory')"
 Add-Result "AtmosDb schema (RecentSearch + __EFMigrationsHistory)" ($tableCount.Trim() -eq '2') "matching table count: $($tableCount.Trim())"
 
+$dbUserCount = sqlcmd -S localhost -E -h -1 -W -d $SqlDatabase -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.database_principals WHERE name = N'$SqlLogin'"
+Add-Result "'$SqlLogin' database user (in $SqlDatabase)" ($dbUserCount.Trim() -eq '1') "sys.database_principals row count: $($dbUserCount.Trim())"
+
+$roleCount = sqlcmd -S localhost -E -h -1 -W -d $SqlDatabase -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.database_role_members drm JOIN sys.database_principals p ON drm.member_principal_id = p.principal_id JOIN sys.database_principals r ON drm.role_principal_id = r.principal_id WHERE p.name = N'$SqlLogin' AND r.name IN (N'db_datareader', N'db_datawriter')"
+Add-Result "'$SqlLogin' role memberships (db_datareader + db_datawriter)" ($roleCount.Trim() -eq '2') "matching role-membership count: $($roleCount.Trim())"
+
 Add-Result "IIS site '$SiteName' started" ((Get-Website -Name $SiteName -ErrorAction SilentlyContinue).State -eq 'Started') ""
 Add-Result "App pool '$AppPoolName' started" ((Get-IISAppPool -Name $AppPoolName -ErrorAction SilentlyContinue).State -eq 'Started') ""
 Add-Result "Physical path '$PhysicalPath'" (Test-Path $PhysicalPath) ""
