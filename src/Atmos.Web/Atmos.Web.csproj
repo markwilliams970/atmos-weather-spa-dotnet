@@ -20,4 +20,8 @@
     <UserSecretsId>21339f62-6347-4485-835a-61c68726562c</UserSecretsId>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Atmos.Web.Tests" />
+  </ItemGroup>
+
 </Project>

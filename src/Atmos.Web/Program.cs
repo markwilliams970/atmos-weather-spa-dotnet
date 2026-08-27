@@ -1,4 +1,6 @@
+using Atmos.Core;
 using Atmos.Web.Data;
+using Atmos.Web.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -12,12 +14,18 @@ builder.Services.AddDbContext<AtmosDbContext>(options =>
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<AtmosDbContext>();
 
+builder.Services.AddAtmosCoreServices(builder.Configuration);
+builder.Services.AddAtmosWebServices(builder.Configuration);
+
+builder.Services.AddExceptionHandler<ApiExceptionHandler>();
+builder.Services.AddProblemDetails();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
+app.UseExceptionHandler("/Error");
 if (!app.Environment.IsDevelopment())
 {
-    app.UseExceptionHandler("/Error");
     // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
     app.UseHsts();
 }
@@ -25,6 +33,8 @@ if (!app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 app.UseRouting();
+
+app.UseMiddleware<SessionCookieMiddleware>();
 
 app.UseAuthorization();
 
@@ -34,3 +44,6 @@ app.MapRazorPages()
 app.MapHealthChecks("/healthz");
 
 app.Run();
+
+// Exposed for WebApplicationFactory<Program> in integration tests.
+public partial class Program;
