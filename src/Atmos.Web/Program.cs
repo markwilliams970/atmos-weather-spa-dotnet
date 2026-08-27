@@ -24,10 +24,19 @@ try
     // "Serilog" config section — appsettings.Production.json is the
     // deployment switch that points the file sink at
     // C:\ProgramData\atmos\logs instead of the dev-default relative "logs/".
+    // preserveStaticLogger: true keeps the static Log.Logger as the plain
+    // bootstrap console logger (used only for the startup/shutdown lines
+    // below) rather than rebinding it to this host's fully-configured
+    // logger. Without it, WebApplicationFactory<Program> (D16's integration
+    // tests) fails with "the logger is already frozen": the test host's
+    // HostFactoryResolver builds and discards a host once to probe the
+    // entry point before building the real one, and both builds run in the
+    // same process against the same static Log.Logger.
     builder.Host.UseSerilog((context, services, configuration) => configuration
         .ReadFrom.Configuration(context.Configuration)
         .ReadFrom.Services(services)
-        .Enrich.FromLogContext());
+        .Enrich.FromLogContext(),
+        preserveStaticLogger: true);
 
     // Add services to the container.
     builder.Services.AddRazorPages();

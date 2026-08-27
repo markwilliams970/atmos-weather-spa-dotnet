@@ -15,7 +15,16 @@ public sealed class ApiExceptionHandler(ILogger<ApiExceptionHandler> logger) : I
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
     {
-        if (!httpContext.Request.Path.StartsWithSegments("/api"))
+        // UseExceptionHandler("/Error") rewrites HttpContext.Request.Path to
+        // the fallback path *before* invoking any registered IExceptionHandler
+        // (confirmed by D16's integration tests, which caught this: every
+        // /api/* failure was silently falling through to the generic 500
+        // rather than this handler's status-code mapping, because the /api
+        // check below was matching against "/Error", not the real request
+        // path). IExceptionHandlerPathFeature.Path is the one populated
+        // before that rewrite happens.
+        var originalPath = httpContext.Features.Get<IExceptionHandlerPathFeature>()?.Path ?? httpContext.Request.Path;
+        if (!originalPath.StartsWith("/api", StringComparison.Ordinal))
         {
             return false;
         }
@@ -30,11 +39,11 @@ public sealed class ApiExceptionHandler(ILogger<ApiExceptionHandler> logger) : I
 
         if (statusCode == StatusCodes.Status500InternalServerError)
         {
-            logger.LogError(exception, "Unhandled exception on {Path}", httpContext.Request.Path);
+            logger.LogError(exception, "Unhandled exception on {Path}", originalPath);
         }
         else
         {
-            logger.LogWarning(exception, "{ExceptionType} on {Path}", exception.GetType().Name, httpContext.Request.Path);
+            logger.LogWarning(exception, "{ExceptionType} on {Path}", exception.GetType().Name, originalPath);
         }
 
         httpContext.Response.StatusCode = statusCode;
