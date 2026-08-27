@@ -12,7 +12,7 @@ namespace Atmos.Web.Infrastructure;
 /// HttpContext.Items for IAppSessionAccessor to read.
 /// </summary>
 public sealed partial class SessionCookieMiddleware(
-    RequestDelegate next, IOptions<SessionCookieOptions> options)
+    RequestDelegate next, IOptions<SessionCookieOptions> options, ILogger<SessionCookieMiddleware> logger)
 {
     public const string SessionIdItemKey = "Atmos.SessionId";
 
@@ -41,6 +41,13 @@ public sealed partial class SessionCookieMiddleware(
                 Secure = context.Request.IsHttps,
                 SameSite = SameSiteMode.Lax,
             });
+
+            // A new-session event, not a per-request one — the volume this
+            // produces is exactly the "sessions started" business metric an
+            // APM/RUM correlation would want, without logging the cookie
+            // value itself.
+            logger.LogInformation(
+                "New session {SessionCorrelator} created", SessionLogging.Correlator(sessionId));
         }
 
         context.Items[SessionIdItemKey] = sessionId;

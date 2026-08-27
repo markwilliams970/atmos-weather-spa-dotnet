@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Text;
@@ -19,11 +20,23 @@ public sealed class NearbyPlaceService(
         double latitude, double longitude, CancellationToken cancellationToken)
     {
         var name = await TryOverpassAsync(latitude, longitude, cancellationToken);
-        return name ?? await TryNominatimAsync(latitude, longitude, cancellationToken);
+        if (name is not null)
+        {
+            return name;
+        }
+
+        // Overpass came back empty rather than erroring — still worth a line,
+        // since "primary source empty, falling back" is a meaningfully
+        // different case from "primary source failed" (already logged inside
+        // TryOverpassAsync's catch) when reading these events as a sequence.
+        logger.LogDebug(
+            "Overpass found no candidate for {Lat},{Lon}; falling back to Nominatim", latitude, longitude);
+        return await TryNominatimAsync(latitude, longitude, cancellationToken);
     }
 
     private async Task<string?> TryOverpassAsync(double lat, double lon, CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
         try
         {
             var la = lat.ToString("R", CultureInfo.InvariantCulture);
@@ -42,6 +55,9 @@ public sealed class NearbyPlaceService(
             var response = await httpClient.PostAsync($"{_options.Overpass}/api/interpreter", content, timeoutCts.Token);
             if (!response.IsSuccessStatusCode)
             {
+                logger.LogInformation(
+                    "Overpass nearby-place lookup for {Lat},{Lon} returned {StatusCode} in {ElapsedMs}ms",
+                    lat, lon, (int)response.StatusCode, stopwatch.ElapsedMilliseconds);
                 return null;
             }
 
@@ -49,6 +65,7 @@ public sealed class NearbyPlaceService(
 
             string? bestName = null;
             var bestDistance = double.MaxValue;
+            var candidateCount = 0;
 
             foreach (var element in body?.Elements ?? [])
             {
@@ -66,6 +83,7 @@ public sealed class NearbyPlaceService(
                     continue;
                 }
 
+                candidateCount++;
                 var distance = GeoMath.HaversineKm(lat, lon, elementLat.Value, elementLon.Value);
                 if (distance < bestDistance)
                 {
@@ -74,17 +92,24 @@ public sealed class NearbyPlaceService(
                 }
             }
 
+            logger.LogDebug(
+                "Overpass nearby-place lookup for {Lat},{Lon} evaluated {CandidateCount} candidates, " +
+                "best {BestName} ({BestDistanceKm:F1}km) in {ElapsedMs}ms",
+                lat, lon, candidateCount, bestName, bestDistance, stopwatch.ElapsedMilliseconds);
             return bestName;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
         {
-            logger.LogWarning(ex, "Overpass nearby-place lookup failed for {Lat},{Lon}", lat, lon);
+            logger.LogWarning(ex,
+                "Overpass nearby-place lookup failed for {Lat},{Lon} after {ElapsedMs}ms",
+                lat, lon, stopwatch.ElapsedMilliseconds);
             return null;
         }
     }
 
     private async Task<string?> TryNominatimAsync(double lat, double lon, CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
         try
         {
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -100,6 +125,9 @@ public sealed class NearbyPlaceService(
             var response = await httpClient.SendAsync(request, timeoutCts.Token);
             if (!response.IsSuccessStatusCode)
             {
+                logger.LogInformation(
+                    "Nominatim reverse-geocode for {Lat},{Lon} returned {StatusCode} in {ElapsedMs}ms",
+                    lat, lon, (int)response.StatusCode, stopwatch.ElapsedMilliseconds);
                 return null;
             }
 
@@ -111,11 +139,17 @@ public sealed class NearbyPlaceService(
                 ?? address.GetValueOrDefault("hamlet")
                 ?? address.GetValueOrDefault("county");
 
-            return LatinNameExtractor.Extract(candidate);
+            var name = LatinNameExtractor.Extract(candidate);
+            logger.LogDebug(
+                "Nominatim reverse-geocode for {Lat},{Lon} resolved to {Name} in {ElapsedMs}ms",
+                lat, lon, name, stopwatch.ElapsedMilliseconds);
+            return name;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
         {
-            logger.LogWarning(ex, "Nominatim reverse-geocode fallback failed for {Lat},{Lon}", lat, lon);
+            logger.LogWarning(ex,
+                "Nominatim reverse-geocode fallback failed for {Lat},{Lon} after {ElapsedMs}ms",
+                lat, lon, stopwatch.ElapsedMilliseconds);
             return null;
         }
     }

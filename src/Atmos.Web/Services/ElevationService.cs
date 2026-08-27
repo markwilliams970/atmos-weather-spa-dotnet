@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
@@ -17,6 +18,7 @@ public sealed class ElevationService(
     public async Task<double?> GetElevationAsync(
         double latitude, double longitude, CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
         try
         {
             var url = $"{_options.OpenMeteoElevation}/v1/elevation" +
@@ -26,15 +28,25 @@ public sealed class ElevationService(
             var response = await httpClient.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
+                logger.LogInformation(
+                    "Elevation lookup for {Lat},{Lon} returned {StatusCode} in {ElapsedMs}ms",
+                    latitude, longitude, (int)response.StatusCode, stopwatch.ElapsedMilliseconds);
                 return null;
             }
 
             var body = await response.Content.ReadFromJsonAsync<ElevationResponse>(cancellationToken);
-            return body?.Elevation is { Count: > 0 } values ? values[0] : null;
+            var elevation = body?.Elevation is { Count: > 0 } values ? values[0] : (double?)null;
+
+            logger.LogDebug(
+                "Elevation lookup for {Lat},{Lon} resolved to {ElevationMeters}m in {ElapsedMs}ms",
+                latitude, longitude, elevation, stopwatch.ElapsedMilliseconds);
+            return elevation;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            logger.LogWarning(ex, "Elevation lookup failed for {Lat},{Lon}", latitude, longitude);
+            logger.LogWarning(ex,
+                "Elevation lookup failed for {Lat},{Lon} after {ElapsedMs}ms",
+                latitude, longitude, stopwatch.ElapsedMilliseconds);
             return null;
         }
     }

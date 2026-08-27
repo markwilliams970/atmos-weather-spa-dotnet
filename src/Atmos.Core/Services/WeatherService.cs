@@ -1,11 +1,16 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using Atmos.Core.Configuration;
 using Atmos.Core.Models;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Atmos.Core.Services;
 
-public sealed class WeatherService(HttpClient httpClient, IOptions<ExternalApiOptions> options) : IWeatherService
+public sealed class WeatherService(
+    HttpClient httpClient,
+    IOptions<ExternalApiOptions> options,
+    ILogger<WeatherService> logger) : IWeatherService
 {
     private readonly ExternalApiOptions _options = options.Value;
 
@@ -35,15 +40,29 @@ public sealed class WeatherService(HttpClient httpClient, IOptions<ExternalApiOp
             $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
         var url = $"{_options.OpenMeteoForecast}/v1/forecast?{queryString}";
 
+        var stopwatch = Stopwatch.StartNew();
         var response = await httpClient.GetAsync(url, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
+            logger.LogWarning(
+                "Forecast fetch for {Latitude},{Longitude} (elevation {ElevationMeters}) " +
+                "returned {StatusCode} in {ElapsedMs}ms",
+                location.Latitude, location.Longitude, elevationMeters,
+                (int)response.StatusCode, stopwatch.ElapsedMilliseconds);
             throw new WeatherServiceException("Weather data is temporarily unavailable.");
         }
 
         var body = await response.Content.ReadFromJsonAsync<OpenMeteoForecastResponse>(cancellationToken)
             ?? throw new WeatherServiceException("Weather data is temporarily unavailable.");
 
-        return ForecastMapper.Map(body, location, elevationMeters);
+        var forecast = ForecastMapper.Map(body, location, elevationMeters);
+
+        logger.LogDebug(
+            "Forecast fetch for {Latitude},{Longitude} (elevation {ElevationMeters}) " +
+            "succeeded in {ElapsedMs}ms: {Condition}, {TempF}F",
+            location.Latitude, location.Longitude, elevationMeters,
+            stopwatch.ElapsedMilliseconds, forecast.Condition, forecast.TempF);
+
+        return forecast;
     }
 }

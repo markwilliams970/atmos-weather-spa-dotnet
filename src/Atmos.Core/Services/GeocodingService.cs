@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using Atmos.Core.Configuration;
 using Atmos.Core.Models;
@@ -15,6 +16,7 @@ public sealed class GeocodingService(
 
     public async Task<Location?> LookupZipAsync(string zip, CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
         try
         {
             var response = await httpClient.GetAsync(
@@ -22,6 +24,9 @@ public sealed class GeocodingService(
 
             if (!response.IsSuccessStatusCode)
             {
+                logger.LogInformation(
+                    "ZIP lookup for {Zip} returned {StatusCode} in {ElapsedMs}ms",
+                    zip, (int)response.StatusCode, stopwatch.ElapsedMilliseconds);
                 return null;
             }
 
@@ -33,14 +38,21 @@ public sealed class GeocodingService(
                 || !double.TryParse(place.Latitude, out var lat)
                 || !double.TryParse(place.Longitude, out var lon))
             {
+                logger.LogInformation(
+                    "ZIP lookup for {Zip} returned no usable place in {ElapsedMs}ms",
+                    zip, stopwatch.ElapsedMilliseconds);
                 return null;
             }
 
+            logger.LogDebug(
+                "ZIP lookup resolved {Zip} -> {City}, {State} in {ElapsedMs}ms",
+                zip, place.PlaceName, place.StateAbbreviation, stopwatch.ElapsedMilliseconds);
             return new Location(place.PlaceName, place.StateAbbreviation, lat, lon);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            logger.LogWarning(ex, "ZIP lookup failed for {Zip}", zip);
+            logger.LogWarning(ex,
+                "ZIP lookup failed for {Zip} after {ElapsedMs}ms", zip, stopwatch.ElapsedMilliseconds);
             return null;
         }
     }
@@ -53,6 +65,7 @@ public sealed class GeocodingService(
             return [];
         }
 
+        var stopwatch = Stopwatch.StartNew();
         try
         {
             var url = $"{_options.OpenMeteoGeocoding}/v1/search" +
@@ -61,20 +74,29 @@ public sealed class GeocodingService(
             var response = await httpClient.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
+                logger.LogInformation(
+                    "City search for {Query} returned {StatusCode} in {ElapsedMs}ms",
+                    query, (int)response.StatusCode, stopwatch.ElapsedMilliseconds);
                 return [];
             }
 
             var body = await response.Content.ReadFromJsonAsync<OpenMeteoGeocodingResponse>(cancellationToken);
-            return body?.Results?
+            var results = body?.Results?
                 .Select(r => new GeocodeResult(r.Name, r.Admin1, r.CountryCode, r.Latitude, r.Longitude))
                 .ToList()
                 ?? [];
+
+            logger.LogDebug(
+                "City search for {Query} returned {ResultCount} results in {ElapsedMs}ms",
+                query, results.Count, stopwatch.ElapsedMilliseconds);
+            return results;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
             // Autocomplete is non-fatal by design — matches the reference app's
             // catch -> {results:[]} behavior (weather-server.ts handleGeocode).
-            logger.LogWarning(ex, "City search failed for {Query}", query);
+            logger.LogWarning(ex,
+                "City search failed for {Query} after {ElapsedMs}ms", query, stopwatch.ElapsedMilliseconds);
             return [];
         }
     }

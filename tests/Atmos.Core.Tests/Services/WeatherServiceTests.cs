@@ -3,6 +3,7 @@ using Atmos.Core.Configuration;
 using Atmos.Core.Models;
 using Atmos.Core.Services;
 using Atmos.Core.Tests.TestSupport;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace Atmos.Core.Tests.Services;
@@ -34,7 +35,7 @@ public class WeatherServiceTests
     public async Task GetForecastAsync_maps_response_into_a_shaped_forecast()
     {
         var client = FakeHttpMessageHandler.CreateJsonClient(MinimalForecastJson);
-        var service = new WeatherService(client, Options.Create(TestOptions));
+        var service = new WeatherService(client, Options.Create(TestOptions), NullLogger<WeatherService>.Instance);
 
         var forecast = await service.GetForecastAsync(
             new Location("Boulder", "CO", 40.0150, -105.2705), elevationMeters: null, CancellationToken.None);
@@ -55,7 +56,7 @@ public class WeatherServiceTests
                 Content = new StringContent(MinimalForecastJson, System.Text.Encoding.UTF8, "application/json"),
             };
         });
-        var service = new WeatherService(client, Options.Create(TestOptions));
+        var service = new WeatherService(client, Options.Create(TestOptions), NullLogger<WeatherService>.Instance);
 
         await service.GetForecastAsync(
             new Location("Boulder", "CO", 40.0150, -105.2705), elevationMeters: 1655.0, CancellationToken.None);
@@ -68,7 +69,7 @@ public class WeatherServiceTests
     {
         var client = FakeHttpMessageHandler.CreateClient(
             _ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
-        var service = new WeatherService(client, Options.Create(TestOptions));
+        var service = new WeatherService(client, Options.Create(TestOptions), NullLogger<WeatherService>.Instance);
 
         var ex = await Assert.ThrowsAsync<WeatherServiceException>(() =>
             service.GetForecastAsync(new Location("Boulder", "CO", 40.0150, -105.2705), null, CancellationToken.None));

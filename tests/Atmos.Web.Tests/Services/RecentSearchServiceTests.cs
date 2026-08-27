@@ -3,6 +3,7 @@ using Atmos.Web.Data;
 using Atmos.Web.Services;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace Atmos.Web.Tests.Services;
@@ -31,7 +32,7 @@ public sealed class RecentSearchServiceTests : IAsyncLifetime
         _db = new AtmosDbContext(options);
         await _db.Database.EnsureCreatedAsync();
 
-        _service = new RecentSearchService(_db, Options.Create(new RecentSearchOptions { MaxPerSession = 10 }));
+        _service = new RecentSearchService(_db, Options.Create(new RecentSearchOptions { MaxPerSession = 10 }), NullLogger<RecentSearchService>.Instance);
     }
 
     public async Task DisposeAsync()
@@ -71,7 +72,7 @@ public sealed class RecentSearchServiceTests : IAsyncLifetime
     [Fact]
     public async Task SaveAsync_trims_to_max_per_session_keeping_most_recently_accessed()
     {
-        var service = new RecentSearchService(_db, Options.Create(new RecentSearchOptions { MaxPerSession = 3 }));
+        var service = new RecentSearchService(_db, Options.Create(new RecentSearchOptions { MaxPerSession = 3 }), NullLogger<RecentSearchService>.Instance);
 
         for (var i = 0; i < 5; i++)
         {

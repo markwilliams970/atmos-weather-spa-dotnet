@@ -1,11 +1,16 @@
 using Atmos.Web.Configuration;
 using Atmos.Web.Data;
+using Atmos.Web.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Atmos.Web.Services;
 
-public sealed class RecentSearchService(AtmosDbContext db, IOptions<RecentSearchOptions> options) : IRecentSearchService
+public sealed class RecentSearchService(
+    AtmosDbContext db,
+    IOptions<RecentSearchOptions> options,
+    ILogger<RecentSearchService> logger) : IRecentSearchService
 {
     private readonly int _maxPerSession = options.Value.MaxPerSession;
 
@@ -32,12 +37,15 @@ public sealed class RecentSearchService(AtmosDbContext db, IOptions<RecentSearch
         LocationType locationType,
         CancellationToken cancellationToken)
     {
+        var correlator = SessionLogging.Correlator(sessionId);
+
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
         var now = DateTime.UtcNow;
         var existing = await db.RecentSearches
             .FirstOrDefaultAsync(r => r.SessionId == sessionId && r.Label == label, cancellationToken);
 
+        var isNew = existing is null;
         if (existing is not null)
         {
             existing.Latitude = latitude;
@@ -72,18 +80,40 @@ public sealed class RecentSearchService(AtmosDbContext db, IOptions<RecentSearch
             .Select(r => r.Id)
             .ToListAsync(cancellationToken);
 
-        await db.RecentSearches
+        var trimmed = await db.RecentSearches
             .Where(r => r.SessionId == sessionId && !idsToKeep.Contains(r.Id))
             .ExecuteDeleteAsync(cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
+
+        // The business-level equivalent of a DB span: an APM/DBM view would
+        // show the individual SQL statements above as spans on their own,
+        // but this line ties them to *why* — which session, insert vs.
+        // update, whether the trim actually removed anything.
+        logger.LogInformation(
+            "RecentSearch {Operation} for session {SessionCorrelator}: {Label} ({LocationType}); " +
+            "trimmed {TrimmedCount} row(s)",
+            isNew ? "insert" : "update", correlator, label, locationType, trimmed);
     }
 
     public async Task UpdateUnitsAsync(
         string sessionId, string label, UnitsPreference units, CancellationToken cancellationToken)
     {
-        await db.RecentSearches
+        var updated = await db.RecentSearches
             .Where(r => r.SessionId == sessionId && r.Label == label)
             .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.Units, units), cancellationToken);
+
+        if (updated == 0)
+        {
+            logger.LogInformation(
+                "UpdateUnits for session {SessionCorrelator} matched no row for {Label}",
+                SessionLogging.Correlator(sessionId), label);
+        }
+        else
+        {
+            logger.LogDebug(
+                "RecentSearch units updated for session {SessionCorrelator}: {Label} -> {Units}",
+                SessionLogging.Correlator(sessionId), label, units);
+        }
     }
 }

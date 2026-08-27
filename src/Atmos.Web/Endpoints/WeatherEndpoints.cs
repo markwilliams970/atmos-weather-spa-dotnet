@@ -6,6 +6,7 @@ using Atmos.Web.Data.Configurations;
 using Atmos.Web.Infrastructure;
 using Atmos.Web.Models;
 using Atmos.Web.Services;
+using Serilog;
 
 namespace Atmos.Web.Endpoints;
 
@@ -38,8 +39,17 @@ public static partial class WeatherEndpoints
         IWeatherService weather,
         IRecentSearchService recentSearch,
         IAppSessionAccessor session,
+        IDiagnosticContext diagnosticContext,
         CancellationToken cancellationToken)
     {
+        // Attaches business context to the one structured log line
+        // UseSerilogRequestLogging() already emits per request, rather than
+        // writing a second, separate "handling weather request" log —
+        // this is what a root-span's tags/attributes would carry once an
+        // APM tracer is attached.
+        diagnosticContext.Set("LocationTypeRequested", zip is not null ? "zip" : locationType ?? "city");
+        diagnosticContext.Set("UnitsRequested", units ?? "imperial");
+
         var unitsPreference = units == "metric" ? UnitsPreference.Metric : UnitsPreference.Imperial;
 
         Location location;
@@ -49,6 +59,8 @@ public static partial class WeatherEndpoints
 
         if (!string.IsNullOrEmpty(zip))
         {
+            diagnosticContext.Set("Zip", zip);
+
             if (!ZipFormat().IsMatch(zip))
             {
                 return Results.BadRequest(new ApiErrorResponse("Invalid ZIP code."));
@@ -87,10 +99,20 @@ public static partial class WeatherEndpoints
             return Results.BadRequest(new ApiErrorResponse("Provide zip or lat/lon/label."));
         }
 
+        diagnosticContext.Set("Latitude", location.Latitude);
+        diagnosticContext.Set("Longitude", location.Longitude);
+        diagnosticContext.Set("LocationTypeResolved", resolvedLocationType);
+
         var elevationMeters = double.TryParse(elevation, out var e) ? e : (double?)null;
+        if (elevationMeters is not null)
+        {
+            diagnosticContext.Set("ElevationMeters", elevationMeters);
+        }
 
         var forecast = await weather.GetForecastAsync(location, elevationMeters, cancellationToken);
         forecast = forecast with { Location = displayLabel, Zip = zipForDisplay };
+
+        diagnosticContext.Set("Condition", forecast.Condition);
 
         await recentSearch.SaveAsync(
             session.SessionId, displayLabel, location.Latitude, location.Longitude,

@@ -1,5 +1,6 @@
 using Atmos.Web.Models;
 using Atmos.Web.Services;
+using Serilog;
 
 namespace Atmos.Web.Endpoints;
 
@@ -11,16 +12,21 @@ public static class AirQualityEndpoints
     }
 
     private static async Task<IResult> HandleAsync(
-        double? lat, double? lon, IAirQualityService airQuality, CancellationToken cancellationToken)
+        double? lat, double? lon, IAirQualityService airQuality,
+        IDiagnosticContext diagnosticContext, CancellationToken cancellationToken)
     {
         if (lat is null || lon is null)
         {
             return Results.BadRequest(new ApiErrorResponse("Invalid coordinates."));
         }
 
+        diagnosticContext.Set("Latitude", lat.Value);
+        diagnosticContext.Set("Longitude", lon.Value);
+
         try
         {
             var result = await airQuality.GetAirQualityAsync(lat.Value, lon.Value, cancellationToken);
+            diagnosticContext.Set("UsAqi", result.UsAqi);
             return Results.Ok(result);
         }
         catch (AirQualityUnavailableException)

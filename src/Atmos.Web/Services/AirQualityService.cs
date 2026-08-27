@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using Atmos.Core.Configuration;
 using Atmos.Core.Conversions;
@@ -23,6 +24,7 @@ public sealed class AirQualityService(
                   $"&longitude={longitude.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}" +
                   "&current=us_aqi,pm10,pm2_5,ozone,nitrogen_dioxide&timezone=auto";
 
+        var stopwatch = Stopwatch.StartNew();
         HttpResponseMessage response;
         try
         {
@@ -30,13 +32,17 @@ public sealed class AirQualityService(
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            logger.LogWarning(ex, "Air quality lookup failed for {Lat},{Lon}", latitude, longitude);
+            logger.LogWarning(ex,
+                "Air quality lookup failed for {Lat},{Lon} after {ElapsedMs}ms",
+                latitude, longitude, stopwatch.ElapsedMilliseconds);
             throw new AirQualityUnavailableException();
         }
 
         if (!response.IsSuccessStatusCode)
         {
-            logger.LogWarning("Air quality API returned {Status}", response.StatusCode);
+            logger.LogWarning(
+                "Air quality API returned {StatusCode} for {Lat},{Lon} in {ElapsedMs}ms",
+                (int)response.StatusCode, latitude, longitude, stopwatch.ElapsedMilliseconds);
             throw new AirQualityUnavailableException();
         }
 
@@ -45,6 +51,10 @@ public sealed class AirQualityService(
 
         var aqi = (int)UnitConversions.JsRound(current.UsAqi);
         var (category, color) = AqiCategorizer.Categorize(aqi);
+
+        logger.LogDebug(
+            "Air quality for {Lat},{Lon} resolved to AQI {UsAqi} ({Category}) in {ElapsedMs}ms",
+            latitude, longitude, aqi, category, stopwatch.ElapsedMilliseconds);
 
         return new AirQuality(
             UsAqi: aqi,
