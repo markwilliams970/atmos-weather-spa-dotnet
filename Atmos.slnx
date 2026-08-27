@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Atmos.Cli/Atmos.Cli.csproj" />
+    <Project Path="src/Atmos.Core/Atmos.Core.csproj" />
+    <Project Path="src/Atmos.Web/Atmos.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Atmos.Core.Tests/Atmos.Core.Tests.csproj" />
+    <Project Path="tests/Atmos.Web.Tests/Atmos.Web.Tests.csproj" />
+  </Folder>
+</Solution>
