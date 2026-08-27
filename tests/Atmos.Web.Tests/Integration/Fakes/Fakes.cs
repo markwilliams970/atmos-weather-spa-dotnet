@@ -17,9 +17,15 @@ namespace Atmos.Web.Tests.Integration.Fakes;
 internal sealed class FakeGeocodingService : IGeocodingService
 {
     public static readonly Location Arvada = new("Arvada", "CO", 39.8283, -105.0844);
+    public static readonly Location BeverlyHills = new("Beverly Hills", "CA", 34.0736, -118.4004);
 
     public Task<Location?> LookupZipAsync(string zip, CancellationToken cancellationToken) =>
-        Task.FromResult(zip == "80002" ? Arvada : null);
+        Task.FromResult(zip switch
+        {
+            "80002" => Arvada,
+            "90210" => BeverlyHills,
+            _ => null,
+        });
 
     public Task<IReadOnlyList<GeocodeResult>> SearchCityAsync(string query, int count, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<GeocodeResult>>(

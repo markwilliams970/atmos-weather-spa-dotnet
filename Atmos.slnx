@@ -7,6 +7,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Atmos.Cli.Tests/Atmos.Cli.Tests.csproj" />
     <Project Path="tests/Atmos.Core.Tests/Atmos.Core.Tests.csproj" />
+    <Project Path="tests/Atmos.Web.PlaywrightTests/Atmos.Web.PlaywrightTests.csproj" />
     <Project Path="tests/Atmos.Web.Tests/Atmos.Web.Tests.csproj" />
   </Folder>
 </Solution>
