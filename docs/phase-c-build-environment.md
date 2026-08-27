@@ -8,6 +8,17 @@ This phase produced the actual solution/project skeleton (D1 territory per CLAUD
 
 ---
 
+## Current state (updated 2026-08-27 — read this before trusting anything below as "what's running")
+
+Everything in this document past this point is a **historical record of Phase C's original, one-time setup** — accurate as a description of what was done and why, not a live status page. Since then, the lab environment described here has been fully formalized into idempotent scripts (`scripts/lab/dev-harness-create.sh`/`-teardown.sh` for the Docker dev harness, `scripts/lab/deploy-to-vm.sh` + `scripts/lab/vm-create.ps1`/`vm-teardown.ps1` for the VM deployment — see `docs/manual-deployment-walkthrough.md`'s appendix), and both the **local dev harness and the `win2025app` VM deployment were deliberately torn down** as part of validating that tooling's DELETE half for real, not just against a dry run. As of this writing, neither exists:
+
+- The `atmos-sql-dev` container, `atmos-sql-dev-data` volume, and its `ConnectionStrings:AtmosDb` User Secrets entry are gone. Bring it back with `scripts/lab/dev-harness-create.sh`.
+- The `AtmosWeb` IIS site/app pool, the published files, the `AtmosDb` database, the `atmos_app` login, the `C:\ProgramData\atmos\logs` directory, and the "AtmosWeb HTTP 8080" firewall rule are all gone from `win2025app`. IIS and SQL Server *themselves* are still installed on the VM (never touched by the teardown) — only the app-specific pieces were removed. Redeploy with `scripts/lab/deploy-to-vm.sh --force`.
+
+Both create scripts were validated for real against this exact VM/harness (see their own commit history and comments) before the teardown, and the teardown itself was independently re-verified afterward (query-based checks, plus confirming the VM's HTTP endpoint stops responding at all) — including catching and fixing a same-process IIS-module caching bug that briefly made the app pool's removal look incomplete when it wasn't (see `vm-teardown.ps1`'s `Get-AppPoolInfo` comment for the full story).
+
+---
+
 ## Environment inventory
 
 **Local development workstation** (Linux Mint 22.3, this machine):
@@ -50,7 +61,7 @@ Rather than deploying with `sa`, created a dedicated SQL login on the VM's SQL S
 - Database: `AtmosDb`
 - Grants: `db_datareader`, `db_datawriter`, plus `CREATE TABLE` / `ALTER ON SCHEMA::dbo` (sufficient to both apply migrations and run the app under one identity for this rehearsal)
 
-The password is stored only in `C:\inetpub\AtmosWeb\appsettings.Production.json` on the VM (not in source control, not reproduced in this document). Phase D/E should decide whether migrations continue to run under `atmos_app` or a separate, more-privileged deployment-only login — a minor tightening, not a blocker.
+**Superseded:** at the time this was written, the password lived in a server-only `appsettings.Production.json`. A later Phase D logging pass moved it to `web.config`'s `<aspNetCore><environmentVariables>` as `ConnectionStrings__AtmosDb` instead — see `docs/logging.md`'s "Deployment note" for why, and `scripts/lab/vm-create.ps1` for the current, idempotent version of this whole login/user/grants setup (it resets the login's password on every run rather than assuming a fixed one, so there's no single "the password" to record anywhere, including here). Phase D/E should still decide whether migrations continue to run under `atmos_app` or a separate, more-privileged deployment-only login — a minor tightening, not a blocker.
 
 ---
 
@@ -65,6 +76,8 @@ The password is stored only in `C:\inetpub\AtmosWeb\appsettings.Production.json`
    - `GET http://192.168.122.54:8080/` → 200 (from both the VM itself and this workstation, confirming the new firewall rule for port 8080 works)
    - `GET http://192.168.122.54:8080/healthz` → `Healthy` — a `Microsoft.Extensions.Diagnostics.HealthChecks` endpoint added specifically to prove the **deployed, IIS-hosted app** can reach the VM's real SQL Server through `atmos_app`, not just that migrations could be applied out-of-band via `sqlcmd`.
 
+   This was this project's *first* proof this worked at all. A more complete, repeatable version of the same proof now exists as `scripts/lab/vm-create.ps1`'s own end-of-run verification report (query-based checks for the database/login/schema *and* the same live `/healthz` request) — see the "Current state" section above.
+
 ---
 
 ## Deliberately deferred (per Phase B §17)
@@ -77,3 +90,5 @@ The password is stored only in `C:\inetpub\AtmosWeb\appsettings.Production.json`
 ## File transfer note
 
 Deploying to the VM required moving a ~32MB published build across — too large for WinRM's inline command channel. Used a temporary local HTTP server (`python3 -m http.server`, bound to the `virbr0` bridge IP `192.168.122.1`) for the VM to pull from via `Invoke-WebRequest`, which needed one local firewall rule (`ufw allow from 192.168.122.0/24 to any port 8899 proto tcp`) opened for the lab subnet only. The temporary server was stopped after use; the firewall rule was left in place since it will be needed again for the next deploy in Phase D/E — narrow scope (lab-only subnet, single port), low risk, but worth knowing it's there.
+
+This exact approach — same bridge IP, same port 8899, same rule — is what `scripts/lab/deploy-to-vm.sh` automates: it starts and stops the bridge server itself around each deploy, but still depends on that `ufw` rule already existing on this workstation. If it's ever missing (a fresh dev machine, or the rule got removed), `deploy-to-vm.sh --force` will fail at the bundle-download step with a `WebException`/connection-refused on the VM side, not an obvious message pointing at the firewall — worth remembering if that happens.
