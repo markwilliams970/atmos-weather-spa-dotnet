@@ -1,52 +1,264 @@
 ﻿<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>@ViewData["Title"] - Atmos.Web</title>
-    <script type="importmap"></script>
-    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
-    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
-    <link rel="stylesheet" href="~/Atmos.Web.styles.css" asp-append-version="true" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <meta name="theme-color" content="#0a0f1e"/>
+  <title>@(ViewData["Title"] as string ?? "Atmos") — Atmos Weather</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="~/css/site.css" asp-append-version="true"/>
 </head>
 <body>
-    <header>
-        <nav class="navbar navbar-expand-sm navbar-toggleable-sm navbar-light bg-white border-bottom box-shadow mb-3">
-            <div class="container">
-                <a class="navbar-brand" asp-area="" asp-page="/Index">Atmos.Web</a>
-                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse" aria-controls="navbarSupportedContent"
-                        aria-expanded="false" aria-label="Toggle navigation">
-                    <span class="navbar-toggler-icon"></span>
-                </button>
-                <div class="navbar-collapse collapse d-sm-inline-flex justify-content-between">
-                    <ul class="navbar-nav flex-grow-1">
-                        <li class="nav-item">
-                            <a class="nav-link text-dark" asp-area="" asp-page="/Index">Home</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link text-dark" asp-area="" asp-page="/Privacy">Privacy</a>
-                        </li>
-                    </ul>
-                </div>
-            </div>
-        </nav>
-    </header>
-    <div class="container">
-        <main role="main" class="pb-3">
-            @RenderBody()
-        </main>
+
+<!-- Sky -->
+<div id="sky" aria-hidden="true">
+  <div id="sky-bg"></div>
+  <div id="sky-glow"></div>
+  <div id="sky-stars"></div>
+  <div id="sky-clouds"></div>
+  <div id="sky-rain"></div>
+  <div id="sky-snow"></div>
+  <div id="sky-fog"></div>
+  <div id="sky-lightning"></div>
+  <div id="sky-orb"></div>
+</div>
+
+<!-- App shell -->
+<div class="shell">
+
+  <!-- Desktop sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <a class="sidebar-brand" href="/">Atmos</a>
+    <nav class="sidebar-nav">
+      <a href="/about">About</a>
+    </nav>
+    <div class="sidebar-section-title">Recent</div>
+    <ul id="recent-list" class="recent-list">
+      <li class="recent-empty">No recent searches</li>
+    </ul>
+  </aside>
+
+  <!-- Main content -->
+  <main class="main" id="main">
+
+    <!-- Search -->
+    <div class="search-area">
+      <div class="search-wrap" id="search-wrap">
+        <input id="search-input" type="text" placeholder="City name or ZIP code"
+               autocomplete="off" spellcheck="false" inputmode="search"/>
+        <button id="search-btn" aria-label="Search">&#8594;</button>
+      </div>
+      <div id="suggestions"></div>
+      <div id="status"></div>
     </div>
 
-    <footer class="border-top footer text-muted">
-        <div class="container">
-            &copy; 2026 - Atmos.Web - <a asp-area="" asp-page="/Privacy">Privacy</a>
+    @RenderBody()
+
+    @if (ViewData["HideWeatherPanels"] is not true)
+    {
+      <!-- Weather panels -->
+      <div id="wx-panels">
+
+        <!-- Hero -->
+        <div class="hero-card">
+          <div class="hero-top">
+            <div>
+              <div class="hero-loc-name" id="loc-name">—</div>
+              <div class="hero-loc-zip"  id="loc-zip"></div>
+            </div>
+            <div class="hero-cond">
+              <span class="hero-cond-emoji" id="cond-emoji"></span>
+              <span class="hero-cond-label" id="cond-label"></span>
+            </div>
+          </div>
+          <div class="hero-bottom">
+            <div>
+              <div class="hero-temp-row">
+                <span class="hero-temp-val" id="temp-val">—</span>
+                <span class="hero-temp-unit" id="temp-unit">°F</span>
+                <span class="hero-feels">Feels like<br><strong id="feels-like">—</strong></span>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:.4rem">
+              <div class="unit-toggle">
+                <span class="unit-opt active" id="unit-f">°F</span>
+                <span class="unit-sep">·</span>
+                <span class="unit-opt" id="unit-c">°C</span>
+              </div>
+              <div class="hero-range" id="hero-range">H: <span id="today-hi">—</span> · L: <span id="today-lo">—</span></div>
+            </div>
+          </div>
         </div>
-    </footer>
 
-    <script src="~/lib/jquery/dist/jquery.min.js"></script>
-    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="~/js/site.js" asp-append-version="true"></script>
+        <!-- Tabs -->
+        <nav class="tab-nav" role="tablist">
+          <button class="tab-btn active" data-tab="current" role="tab">Current</button>
+          <button class="tab-btn"        data-tab="hourly"  role="tab">24-Hour</button>
+          <button class="tab-btn"        data-tab="daily"   role="tab">7-Day</button>
+        </nav>
 
-    @await RenderSectionAsync("Scripts", required: false)
+        <!-- Tab: Current -->
+        <div id="tab-current" class="tab-panel active">
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-label">Humidity</div>
+              <div class="stat-main">
+                <div>
+                  <div class="stat-val" id="humidity-val">—</div>
+                  <div class="stat-sub" id="humidity-sub"></div>
+                </div>
+                <div class="gauge-wrap">
+                  <svg id="hum-svg" width="60" height="60" viewBox="0 0 60 60"></svg>
+                </div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">UV Index</div>
+              <div class="stat-main">
+                <div>
+                  <div class="stat-val" id="uv-val">—</div>
+                  <div class="stat-sub" id="uv-sub"></div>
+                </div>
+                <div class="gauge-wrap">
+                  <svg id="uv-svg" width="70" height="44" viewBox="0 0 70 44"></svg>
+                </div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Wind</div>
+              <div class="stat-main">
+                <div>
+                  <div class="stat-val" id="wind-val">—</div>
+                  <div class="stat-sub" id="wind-sub"></div>
+                </div>
+                <div class="gauge-wrap">
+                  <svg id="wind-svg" width="60" height="60" viewBox="0 0 60 60"></svg>
+                </div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Precipitation</div>
+              <div class="stat-main">
+                <div>
+                  <div class="stat-val" id="precip-val">—</div>
+                  <div class="stat-sub" id="precip-sub">Today</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sun-card">
+            <div class="sun-card-label">Daylight</div>
+            <svg id="sun-arc-svg" height="100" viewBox="0 0 360 100" preserveAspectRatio="xMidYMid meet"></svg>
+          </div>
+
+          <div class="details-row" id="details-row"></div>
+
+          <div class="map-pill">
+            <span id="loc-coords" style="font-size:.68rem;color:var(--text-2)">—</span>
+            <a id="map-link" class="map-link" href="#" target="_blank" rel="noopener">View on OpenStreetMap ↗</a>
+          </div>
+
+          <div class="aq-card" id="aq-card">
+            <div class="stat-label">Air Quality Index · US AQI</div>
+            <div class="aq-main">
+              <div class="aq-aqi-val" id="aqi-val">—</div>
+              <div style="padding-bottom:.3rem">
+                <div class="aq-aqi-cat" id="aqi-cat"></div>
+              </div>
+            </div>
+            <svg id="aqi-bar-svg" height="12" viewBox="0 0 300 12" preserveAspectRatio="none"></svg>
+            <div class="aq-metrics">
+              <div class="aq-metric"><span class="aq-mlabel">PM2.5</span><span class="aq-mval" id="aq-pm25">—</span></div>
+              <div class="aq-metric"><span class="aq-mlabel">PM10</span><span class="aq-mval" id="aq-pm10">—</span></div>
+              <div class="aq-metric"><span class="aq-mlabel">Ozone</span><span class="aq-mval" id="aq-ozone">—</span></div>
+              <div class="aq-metric"><span class="aq-mlabel">NO₂</span><span class="aq-mval" id="aq-no2">—</span></div>
+            </div>
+          </div>
+
+          <div class="radar-card">
+            <div class="radar-card-header">
+              <span class="stat-label">Weather Radar</span>
+              <span class="radar-footer" id="radar-ts" style="margin:0;font-size:.6rem"></span>
+            </div>
+            <div id="radar-map" class="radar-map">
+              <div class="radar-placeholder">Search for a location to view radar</div>
+            </div>
+            <div class="radar-footer">
+              <span>RainViewer · © OpenStreetMap · © CARTO</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Hourly -->
+        <div id="tab-hourly" class="tab-panel">
+          <div class="chart-card">
+            <div class="chart-label-row">
+              <span class="chart-title">Temperature · Next 24 Hours</span>
+            </div>
+            <svg id="temp-chart" height="140"></svg>
+          </div>
+          <div class="hour-scroll" id="hour-scroll"></div>
+        </div>
+
+        <!-- Tab: Daily -->
+        <div id="tab-daily" class="tab-panel">
+          <div class="daily-list" id="daily-list"></div>
+        </div>
+
+        <div class="data-footer">Data · Open-Meteo · Zippopotam.us · RainViewer · No API key required</div>
+      </div><!-- /#wx-panels -->
+    }
+
+  </main><!-- /.main -->
+</div><!-- /.shell -->
+
+<!-- Mobile bottom nav -->
+<nav class="bottom-nav" id="bottom-nav" aria-label="Navigation">
+  <button class="bnav-btn active" data-bnav="current" id="bnav-current">
+    <span class="bnav-icon">◉</span><span>Now</span>
+  </button>
+  <button class="bnav-btn" data-bnav="hourly" id="bnav-hourly">
+    <span class="bnav-icon">◷</span><span>24h</span>
+  </button>
+  <button class="bnav-btn" data-bnav="daily" id="bnav-daily">
+    <span class="bnav-icon">▦</span><span>Week</span>
+  </button>
+  <button class="bnav-btn" data-bnav="recents" id="bnav-recents">
+    <span class="bnav-icon">☰</span><span>Recent</span>
+  </button>
+</nav>
+
+<!-- Mobile recents drawer -->
+<div class="recents-drawer" id="recents-drawer">
+  <div class="drawer-title">Recent Searches</div>
+  <div id="drawer-list"></div>
+</div>
+
+<!-- Map picker modal -->
+<div class="map-picker-overlay" id="map-picker-overlay">
+  <div class="map-picker-card">
+    <div class="map-picker-header">
+      <span>Select a location</span>
+      <button id="map-picker-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="map-picker-viewport" id="map-picker-viewport">
+      <div class="map-picker-pin" id="map-picker-pin" style="display:none;"></div>
+      <div class="map-picker-zoom">
+        <button id="map-picker-zoom-in" aria-label="Zoom in">+</button>
+        <button id="map-picker-zoom-out" aria-label="Zoom out">&minus;</button>
+      </div>
+    </div>
+    <div class="map-picker-footer">
+      <span id="map-picker-coords">Click the map to drop a pin</span>
+      <button id="map-picker-use" disabled>Use this location</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="~/js/app.js" asp-append-version="true"></script>
+@await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>

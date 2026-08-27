@@ -1,0 +1,18 @@
+@page
+@model MapModel
+@{
+    ViewData["Title"] = "Map";
+    ViewData["HideWeatherPanels"] = true;
+}
+
+<div class="about-card">
+  <h2>Pick a location on the map</h2>
+  <p>Opening the map picker…</p>
+</div>
+
+@section Scripts {
+  <script type="module">
+    import { openMapPicker } from '/js/map-picker.js';
+    document.addEventListener('DOMContentLoaded', () => openMapPicker());
+  </script>
+}

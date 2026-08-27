@@ -1,5 +1,6 @@
 using Atmos.Core;
 using Atmos.Web.Data;
+using Atmos.Web.Endpoints;
 using Atmos.Web.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
@@ -42,6 +43,14 @@ app.MapStaticAssets();
 app.MapRazorPages()
    .WithStaticAssets();
 app.MapHealthChecks("/healthz");
+
+app.MapWeatherEndpoints();
+app.MapGeocodeEndpoints();
+app.MapRecentEndpoints();
+app.MapAirQualityEndpoints();
+app.MapElevationEndpoints();
+app.MapNearbyPlaceEndpoints();
+app.MapRadarEndpoints();
 
 app.Run();
 
