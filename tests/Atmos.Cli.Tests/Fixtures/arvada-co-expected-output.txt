@@ -1,0 +1,17 @@
+
+┌────────────────────────────┐
+│  🌤️  Arvada, CO           │
+├────────────────────────────┤
+│   🌡️  Temperature   : 92°F  (feels like 89°F) │
+│   💧  Humidity      : 13%  │
+│   💨  Wind          : 8 mph ENE │
+│   🌧️  Precipitation  : 0 in │
+│   ☀️  UV Index       : 7.15 │
+│   🌅  Sunrise        : 6:24 AM │
+│   🌇  Sunset         : 7:39 PM │
+│   📍  Coordinates   : 39.7945, -105.0984 │
+│   🗺️  Map            : https://www.openstreetmap.org/?mlat=39.7945&mlon=-105.0984#map=14/39.7945/-105.0984 │
+├────────────────────────────┤
+│   🌤️  Mainly Clear        │
+└────────────────────────────┘
+
