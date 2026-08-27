@@ -43,6 +43,21 @@ function Add-Result([string]$Artifact, [bool]$Ok, [string]$Detail) {
     $results.Add([pscustomobject]@{ Artifact = $Artifact; Ok = $Ok; Detail = $Detail })
 }
 
+# Get-IISAppPool (the IISAdministration module) and Remove-WebAppPool/
+# New-WebAppPool (the classic WebAdministration module used everywhere else
+# in this script) each keep their own independent, in-process ServerManager
+# cache — a Remove-WebAppPool earlier in *this same* script does not
+# invalidate what Get-IISAppPool reports later in it, producing a false
+# "STILL PRESENT" in the post-cleanup report even though the pool really is
+# gone (confirmed: a fresh WinRM call, i.e. a fresh process, reported it
+# correctly absent immediately afterward). Test-Path/Get-WebAppPoolState
+# against the IIS:\ PSDrive stay within WebAdministration throughout, so
+# every read in this script sees the same mutations the removals make.
+function Get-AppPoolInfo([string]$Name) {
+    if (-not (Test-Path "IIS:\AppPools\$Name")) { return $null }
+    return [pscustomobject]@{ State = (Get-WebAppPoolState -Name $Name -ErrorAction SilentlyContinue).Value }
+}
+
 Write-Output "================================================================"
 Write-Output " Atmos Weather VM teardown — win2025app"
 Write-Output " Mode: $(if ($Force) { 'FORCE (will delete/drop things)' } else { 'DRY RUN (no changes)' })"
@@ -61,7 +76,7 @@ Import-Module WebAdministration -ErrorAction SilentlyContinue
 $siteBefore = Get-Website -Name $SiteName -ErrorAction SilentlyContinue
 Write-Output "IIS site '$SiteName': $(if ($siteBefore) { "present (state: $($siteBefore.State))" } else { 'absent' })"
 
-$poolBefore = Get-IISAppPool -Name $AppPoolName -ErrorAction SilentlyContinue
+$poolBefore = Get-AppPoolInfo $AppPoolName
 Write-Output "App pool '$AppPoolName': $(if ($poolBefore) { "present (state: $($poolBefore.State))" } else { 'absent' })"
 
 $pathBefore = Test-Path $PhysicalPath
@@ -179,7 +194,7 @@ if (Get-Website -Name $SiteName -ErrorAction SilentlyContinue) {
     Write-Output "IIS site '$SiteName' already absent."
 }
 
-if (Get-IISAppPool -Name $AppPoolName -ErrorAction SilentlyContinue) {
+if (Get-AppPoolInfo $AppPoolName) {
     Remove-WebAppPool -Name $AppPoolName -Confirm:$false
     Write-Output "Removed app pool '$AppPoolName'."
 } else {
@@ -235,7 +250,7 @@ $loginStillExists = sqlcmd -S localhost -E -h -1 -W -Q "SET NOCOUNT ON; SELECT C
 Add-Result "SQL login '$SqlLogin'" ($loginStillExists.Trim() -eq '0') "sys.server_principals row count: $($loginStillExists.Trim())"
 
 Add-Result "IIS site '$SiteName'" (-not (Get-Website -Name $SiteName -ErrorAction SilentlyContinue)) ""
-Add-Result "App pool '$AppPoolName'" (-not (Get-IISAppPool -Name $AppPoolName -ErrorAction SilentlyContinue)) ""
+Add-Result "App pool '$AppPoolName'" (-not (Get-AppPoolInfo $AppPoolName)) ""
 Add-Result "Physical path '$PhysicalPath'" (-not (Test-Path $PhysicalPath)) ""
 Add-Result "Firewall rule '$FirewallRule'" (-not (Get-NetFirewallRule -DisplayName $FirewallRule -ErrorAction SilentlyContinue)) ""
 Add-Result "Log directory '$LogDir'" (-not (Test-Path $LogDir)) ""

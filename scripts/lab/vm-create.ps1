@@ -57,6 +57,21 @@ function Add-Result([string]$Artifact, [bool]$Ok, [string]$Detail) {
     $results.Add([pscustomobject]@{ Artifact = $Artifact; Ok = $Ok; Detail = $Detail })
 }
 
+# Get-IISAppPool (the IISAdministration module) and New-WebAppPool (the
+# classic WebAdministration module used everywhere else in this script)
+# each keep their own independent, in-process ServerManager cache — a
+# New-WebAppPool earlier in *this same* script would not be visible to a
+# later Get-IISAppPool call in it, which could report a freshly-created pool
+# as still absent (confirmed as a real bug against vm-teardown.ps1's mirror
+# image of this same mixing, where a just-removed pool falsely reported
+# "STILL PRESENT"). Test-Path/Get-WebAppPoolState against the IIS:\ PSDrive
+# stay within WebAdministration throughout, so every read in this script
+# sees the same mutations New-WebAppPool makes.
+function Get-AppPoolInfo([string]$Name) {
+    if (-not (Test-Path "IIS:\AppPools\$Name")) { return $null }
+    return [pscustomobject]@{ State = (Get-WebAppPoolState -Name $Name -ErrorAction SilentlyContinue).Value }
+}
+
 Write-Output "================================================================"
 Write-Output " Atmos Weather VM deploy - win2025app"
 Write-Output " Mode: $(if ($Force) { 'FORCE (will deploy/create things)' } else { 'DRY RUN (no changes)' })"
@@ -97,7 +112,7 @@ if ($sqlReachable) {
 $siteBefore = Get-Website -Name $SiteName -ErrorAction SilentlyContinue
 Write-Output "IIS site '$SiteName': $(if ($siteBefore) { "present (state: $($siteBefore.State))" } else { 'absent' })"
 
-$poolBefore = Get-IISAppPool -Name $AppPoolName -ErrorAction SilentlyContinue
+$poolBefore = Get-AppPoolInfo $AppPoolName
 Write-Output "App pool '$AppPoolName': $(if ($poolBefore) { "present (state: $($poolBefore.State))" } else { 'absent' })"
 
 if ($sqlReachable) {
@@ -320,7 +335,7 @@ Write-Output ""
 # ---------------------------------------------------------------------------
 Write-Output "--- App pool and site ---"
 try {
-    if (-not (Get-IISAppPool -Name $AppPoolName -ErrorAction SilentlyContinue)) {
+    if (-not (Get-AppPoolInfo $AppPoolName)) {
         Write-Output "Creating app pool '$AppPoolName'..."
         New-WebAppPool -Name $AppPoolName | Out-Null
         Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name "managedRuntimeVersion" -Value ""
@@ -453,7 +468,7 @@ $roleCount = sqlcmd -S localhost -E -h -1 -W -d $SqlDatabase -Q "SET NOCOUNT ON;
 Add-Result "'$SqlLogin' role memberships (db_datareader + db_datawriter)" ($roleCount.Trim() -eq '2') "matching role-membership count: $($roleCount.Trim())"
 
 Add-Result "IIS site '$SiteName' started" ((Get-Website -Name $SiteName -ErrorAction SilentlyContinue).State -eq 'Started') ""
-Add-Result "App pool '$AppPoolName' started" ((Get-IISAppPool -Name $AppPoolName -ErrorAction SilentlyContinue).State -eq 'Started') ""
+Add-Result "App pool '$AppPoolName' started" ((Get-AppPoolInfo $AppPoolName).State -eq 'Started') ""
 Add-Result "Physical path '$PhysicalPath'" (Test-Path $PhysicalPath) ""
 Add-Result "web.config has ConnectionStrings__AtmosDb" ((Select-String -Path (Join-Path $PhysicalPath "web.config") -Pattern "ConnectionStrings__AtmosDb" -Quiet)) ""
 Add-Result "Firewall rule '$FirewallRule'" ([bool](Get-NetFirewallRule -DisplayName $FirewallRule -ErrorAction SilentlyContinue)) ""
