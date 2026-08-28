@@ -71,7 +71,21 @@ if err:
 sys.exit(0)
 PYEOF
 
-  trap 'rm -f "$_WINRM_OPENSSL_CONF" "$_WINRM_PY_RUNNER"' EXIT
+}
+
+# winrm_cleanup -- removes the temp files winrm_init created. Deliberately
+# NOT registered as its own `trap ... EXIT` here: bash EXIT traps don't
+# chain — a second `trap ... EXIT` call silently *replaces* the first rather
+# than adding to it. A caller script that sets its own trap before calling
+# winrm_init (deploy-to-vm.sh does, to also kill its file-bridge server and
+# clean up its workdir) would have that trap silently clobbered, and its own
+# cleanup would simply never run — confirmed as a real, reproducible bug
+# this way: a leaked python3 http.server process holding a port open after
+# every run. Callers must call winrm_cleanup themselves from their own single
+# EXIT trap (see run-vm-teardown.sh and deploy-to-vm.sh for the two shapes
+# this takes: a script with nothing else to clean up vs. one that does).
+winrm_cleanup() {
+  rm -f "$_WINRM_OPENSSL_CONF" "$_WINRM_PY_RUNNER"
 }
 
 # winrm_exec  -- reads a PowerShell script from stdin, runs it on the VM,

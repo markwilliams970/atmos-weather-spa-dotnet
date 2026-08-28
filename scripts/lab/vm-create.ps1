@@ -72,6 +72,27 @@ function Get-AppPoolInfo([string]$Name) {
     return [pscustomobject]@{ State = (Get-WebAppPoolState -Name $Name -ErrorAction SilentlyContinue).Value }
 }
 
+# Stop-WebAppPool/Stop-Website returning does not guarantee the w3wp.exe
+# worker process has actually exited and released its file locks yet, and
+# IIS's Windows Process Activation Service can transiently refuse a
+# Start-WebAppPool/Start-Website call immediately after a Stop with "The
+# service cannot accept control messages at this time" - both confirmed as
+# real failures during a live redeploy, not theoretical. Retrying with a
+# short backoff is the practical fix; there's no clean "wait until truly
+# ready" signal IIS exposes for either case.
+function Invoke-WithRetry([scriptblock]$Action, [string]$Description, [int]$MaxAttempts = 5, [int]$DelaySeconds = 3) {
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            & $Action
+            return
+        } catch {
+            if ($attempt -eq $MaxAttempts) { throw }
+            Write-Output "  $Description failed (attempt $attempt/$MaxAttempts): $($_.Exception.Message) - retrying in ${DelaySeconds}s..."
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+}
+
 Write-Output "================================================================"
 Write-Output " Atmos Weather VM deploy - win2025app"
 Write-Output " Mode: $(if ($Force) { 'FORCE (will deploy/create things)' } else { 'DRY RUN (no changes)' })"
@@ -283,7 +304,15 @@ try {
     if (-not (Test-Path $migratePath)) {
         throw "migrate.sql not found in the downloaded bundle."
     }
-    sqlcmd -S localhost -E -i $migratePath
+    # -d $SqlDatabase is required here: sqlcmd -E with no -d connects using the
+    # admin login's default database (master on this VM), and the idempotent
+    # migration script has no USE statement of its own — without -d, this
+    # silently creates the schema in master instead of AtmosDb. sqlcmd still
+    # exits 0 and prints success either way, so this was only caught by the
+    # schema-verification query later in this script actually checking
+    # INFORMATION_SCHEMA.TABLES *inside AtmosDb specifically* (Verification
+    # section, below) rather than trusting a clean exit code.
+    sqlcmd -S localhost -E -d $SqlDatabase -i $migratePath
     $migrateExitCode = $LASTEXITCODE
     if ($migrateExitCode -ne 0) {
         Write-Output "WARNING: migration script exited with code $migrateExitCode - see output above."
@@ -307,6 +336,10 @@ if ($siteBefore -and $siteBefore.State -eq 'Started') {
 if ($poolBefore -and $poolBefore.State -eq 'Started') {
     Write-Output "Stopping app pool '$AppPoolName' before file swap..."
     Stop-WebAppPool -Name $AppPoolName -ErrorAction SilentlyContinue
+    # Stop-WebAppPool returning does not mean w3wp.exe has actually exited
+    # yet - give it a moment before the file operations below, which retry
+    # on their own anyway if this isn't enough.
+    Start-Sleep -Seconds 3
 }
 Write-Output ""
 
@@ -319,9 +352,13 @@ try {
     if (-not (Test-Path $publishSource)) {
         throw "publish/ not found in the downloaded bundle."
     }
-    if (Test-Path $PhysicalPath) { Remove-Item -Path $PhysicalPath -Recurse -Force }
+    Invoke-WithRetry -Description "removing the previous deployment" -Action {
+        if (Test-Path $PhysicalPath) { Remove-Item -Path $PhysicalPath -Recurse -Force }
+    }
     New-Item -ItemType Directory -Path $PhysicalPath -Force | Out-Null
-    Copy-Item -Path (Join-Path $publishSource "*") -Destination $PhysicalPath -Recurse -Force
+    Invoke-WithRetry -Description "copying published files" -Action {
+        Copy-Item -Path (Join-Path $publishSource "*") -Destination $PhysicalPath -Recurse -Force
+    }
     Remove-Item -Path $BundleExtractPath -Recurse -Force -ErrorAction SilentlyContinue
     Write-Output "Files deployed."
 } catch {
@@ -437,8 +474,13 @@ Write-Output ""
 # ---------------------------------------------------------------------------
 Write-Output "--- Starting app pool and site ---"
 try {
-    Start-WebAppPool -Name $AppPoolName -ErrorAction SilentlyContinue
-    Start-Website -Name $SiteName -ErrorAction SilentlyContinue
+    # WAS can transiently refuse this immediately after the Stop earlier in
+    # this run ("The service cannot accept control messages at this time") -
+    # confirmed as a real failure, not theoretical; -ErrorAction
+    # SilentlyContinue does not suppress it since it's a thrown exception,
+    # not a non-terminating error, so the retry below actually sees it.
+    Invoke-WithRetry -Description "starting app pool" -Action { Start-WebAppPool -Name $AppPoolName }
+    Invoke-WithRetry -Description "starting site" -Action { Start-Website -Name $SiteName }
     Write-Output "Started."
 } catch {
     Write-Output "ERROR starting app pool/site: $($_.Exception.Message)"

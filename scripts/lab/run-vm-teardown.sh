@@ -42,6 +42,7 @@ if [[ ! -f "$TEARDOWN_PS1" ]]; then
 fi
 
 winrm_init
+trap winrm_cleanup EXIT
 
 echo "Running vm-teardown.ps1 against $ATMOS_VM_HOST as $ATMOS_VM_USER ($( [[ -n "$FORCE_FLAG" ]] && echo "FORCE" || echo "dry run" ))..."
 echo

@@ -66,6 +66,11 @@ WORKDIR="$(mktemp -d)"
 cleanup() {
   [[ -n "${BRIDGE_PID:-}" ]] && kill "$BRIDGE_PID" >/dev/null 2>&1 || true
   rm -rf "$WORKDIR"
+  # winrm_cleanup is a function, not its own trap — see its definition in
+  # _winrm-common.sh for why (a second `trap ... EXIT` from winrm_init would
+  # silently replace this one rather than adding to it).
+  declare -f winrm_cleanup >/dev/null && winrm_cleanup
+  return 0
 }
 trap cleanup EXIT
 
@@ -99,7 +104,23 @@ echo "Bundle size: $(du -h "$WORKDIR/$BUNDLE_NAME" | cut -f1)"
 echo
 
 echo "== Starting temporary file bridge on ${BRIDGE_IP}:${BRIDGE_PORT} =="
-(cd "$WORKDIR" && python3 -m http.server "$BRIDGE_PORT" --bind "$BRIDGE_IP" >/dev/null 2>&1) &
+# A stale bridge from a previous run that didn't get cleaned up (see the
+# BRIDGE_PID note below) would otherwise make this fail with a confusing
+# "already in use" — self-heal instead of requiring a manual `kill`.
+stale_pid="$(lsof -ti ":$BRIDGE_PORT" 2>/dev/null || true)"
+if [[ -n "$stale_pid" ]]; then
+  echo "Port $BRIDGE_PORT already in use by PID $stale_pid (a leaked bridge from an earlier run) — killing it."
+  kill "$stale_pid" >/dev/null 2>&1 || true
+  sleep 1
+fi
+
+# --directory avoids `(cd "$WORKDIR" && python3 ...) &`, which backgrounds a
+# *subshell* wrapping python3 rather than python3 itself — $! then captures
+# the subshell's PID, and killing that doesn't reliably kill its python3
+# child, which is exactly how a previous run's bridge server was confirmed
+# to leak and hold this port open indefinitely. Backgrounding python3
+# directly means BRIDGE_PID is python3's own PID.
+python3 -m http.server "$BRIDGE_PORT" --bind "$BRIDGE_IP" --directory "$WORKDIR" >/dev/null 2>&1 &
 BRIDGE_PID=$!
 sleep 1
 if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
