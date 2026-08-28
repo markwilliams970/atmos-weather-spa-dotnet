@@ -318,6 +318,35 @@ If you want to reach this site from outside the VM (rather than just testing fro
 New-NetFirewallRule -DisplayName "AtmosWeb HTTP 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow
 ```
 
+### 4.8 Disable WebDAV for this site (if it's installed)
+
+This one is easy to miss entirely until you hit it: if this IIS box has the **WebDAV Publishing** role service installed (a common default under "Common HTTP Features" — check **Server Manager → IIS → Roles and Features**, or just try the verification step below and see if you hit it), IIS's `WebDAVModule` intercepts `PUT`/`DELETE`/`PROPFIND`/etc. **at the module level, before IIS even decides which handler should process the request** — regardless of your own `aspNetCore` handler's `verb="*"` from 4.5. The symptom is IIS's own generic **405 - HTTP verb used to access this page is not allowed** page, not anything from the ASP.NET Core app, which makes it easy to mistake for an application bug (this project did, the first time — see `docs/phase-c-build-environment.md`'s Phase E section).
+
+This app only has one endpoint that needs this: `PUT /api/recent/units` (the unit-preference toggle). If WebDAV is present, add this to `C:\inetpub\AtmosWeb\web.config`'s `<system.webServer>` section — as a sibling of the `<aspNetCore>` element from 4.5, not nested inside it:
+
+```xml
+<system.webServer>
+  <modules>
+    <remove name="WebDAVModule" />
+  </modules>
+  <handlers>
+    <remove name="WebDAV" />
+    <!-- your existing <add name="aspNetCore" .../> handler stays here -->
+  </handlers>
+  <aspNetCore ... />
+</system.webServer>
+```
+
+`<remove>` here only affects **this site's** handler/module pipeline, not WebDAV server-wide — safe even if another site on the same box genuinely uses WebDAV for something.
+
+**Verify it took:** from the VM itself,
+```powershell
+Invoke-WebRequest -Uri "http://localhost:8080/api/recent/units" -Method PUT -Body '{"label":"test","units":"metric"}' -ContentType "application/json" -Headers @{Origin="http://localhost:8080"} -UseBasicParsing
+```
+should return `204`, not `405`. (A `204` here is actually correct even for a label that doesn't exist in any saved search yet — this endpoint is a documented no-op for an unrecognized label, not an error.)
+
+**Remember to redo this on every redeploy, same as 4.5** — `dotnet publish` regenerates `web.config` from scratch, taking this with it.
+
 ---
 
 ## Part 5 — First run and verification
@@ -370,6 +399,7 @@ ASP.NET Core-on-IIS errors are notoriously terse. Here's what the common ones ac
 | **HTTP 502.5 - Process Failure** | ANCM couldn't even launch `dotnet.exe` — usually means the Hosting Bundle isn't actually installed, or `web.config`'s `processPath`/`arguments` got corrupted by a manual edit. | Re-run `dotnet --info` on the VM directly; re-verify Part 1.2. |
 | Site loads, but static CSS/JS is missing (unstyled page) | Physical path in the site binding doesn't actually point at your published `wwwroot` folder, or the deploy copied files into the wrong subfolder. | Confirm `C:\inetpub\AtmosWeb\wwwroot\css\site.css` actually exists. |
 | Everything works from the VM itself but not from another machine | Firewall (Part 4.7) not opened, or binding is restricted to an IP that doesn't match how you're connecting. | Re-check the firewall rule; try `Test-NetConnection -ComputerName <vm-ip> -Port 8080` from the other machine. |
+| **HTTP 405 - HTTP verb used to access this page is not allowed**, specifically on the unit-toggle request (`PUT /api/recent/units`) — everything else (search, forecast) works fine | IIS's WebDAV module intercepting the `PUT` before your app ever sees it — a real bug this project hit, not a hypothetical. | Part 4.8 — check whether WebDAV Publishing is installed and add the `<remove>` entries if so. |
 
 **General diagnostic habit worth building:** whenever something's broken and you're not sure why, `stdoutLogEnabled="true"` + a fresh request + reading the newest `stdout_*.log` file answers "did the app even start" faster than almost anything else. Once the app *is* running, `C:\ProgramData\atmos\logs`'s structured JSON logs are far more useful for "why did this specific request behave oddly."
 
@@ -377,7 +407,7 @@ ASP.NET Core-on-IIS errors are notoriously terse. Here's what the common ones ac
 
 ## Part 7 — Deliberately out of scope here
 
-- **HTTPS.** This walkthrough (and this project's own automated VM) serves plain HTTP. A real deployment needs a certificate (self-signed for a lab, a real one otherwise) bound in IIS and `app.UseHsts()`'s effects taken seriously — CLAUDE.md defers this to a later "Phase E" deployment-hardening pass that hasn't happened yet on the automated VM either, so there's nothing to point you at here.
+- **HTTPS.** This walkthrough (and this project's own automated VM) serves plain HTTP. A real deployment needs a certificate (self-signed for a lab, a real one otherwise) bound in IIS and `app.UseHsts()`'s effects taken seriously. Phase E (CLAUDE.md §23's deployment-verification checklist) has since run against the automated VM and explicitly re-confirmed HTTPS is still not configured — a known, deliberate gap, not an oversight — so there's still nothing to point you at here; this remains open if you want to pick it up as its own task.
 - **A repeatable CI/CD pipeline.** Everything in this guide, and in this project's own automation, is a one-shot, manually-triggered deployment. Neither is "redeploy on every commit."
 
 ---
@@ -394,4 +424,4 @@ If you want to compare notes after doing this by hand, or set up a second VM fas
 - `scripts/lab/_winrm-common.sh` — the shared WinRM connection/file-transfer helpers both VM scripts' wrappers use (NTLM + the OpenSSL legacy-provider workaround, chunked script upload around WinRS's ~8KB command-line ceiling).
 - `scripts/lab/dev-harness-create.sh` / `scripts/lab/dev-harness-teardown.sh` — the equivalent create/delete pair for the local Docker dev harness (§ "Local dev SQL Server" in `docs/phase-c-build-environment.md`): the `atmos-sql-dev` container/volume, the applied EF Core migration, and the matching User Secrets entry.
 
-**All four were validated for real, not just dry-run:** `deploy-to-vm.sh --force` as an idempotent redeploy over the already-running site (every check in its report passed, including a live `/healthz` round-trip), then `run-vm-teardown.sh --force` to actually tear that deployment back down again (also fully verified afterward — see `docs/phase-c-build-environment.md`'s "Current state" section); the dev-harness pair the same way. **As of this writing, the VM deployment and the local dev harness are both torn down** — `win2025app` still has IIS/SQL Server installed, just none of the app-specific pieces. Running `deploy-to-vm.sh --force` / `dev-harness-create.sh` again brings each back.
+**All four have been validated for real, repeatedly, not just via dry-run** — including a genuine from-scratch redeploy (Phase E, after a full teardown) that caught the real bugs documented in `docs/phase-c-build-environment.md`'s "Phase E" section, and a full create → use (real read/write traffic) → delete cycle for the dev-harness pair. See that same doc's "Current state" section for which of the two environments is up right now — it changes often enough as this tooling gets exercised that it isn't worth restating here.

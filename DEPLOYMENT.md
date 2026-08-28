@@ -38,7 +38,7 @@ This publishes `Atmos.Web`, generates the current EF Core migration script, and 
 5. Deploys the published files to the IIS site's physical path (stopping the site/pool first, since in-process hosting locks the running DLL).
 6. Creates the IIS app pool and site if they don't already exist.
 7. Sets filesystem permissions for the app pool identity.
-8. Rewrites `web.config`'s `<environmentVariables>` — `ASPNETCORE_ENVIRONMENT=Production` and the `ConnectionStrings__AtmosDb` secret. **This step matters on every redeploy**, not just the first one: `dotnet publish` regenerates `web.config` from scratch every time, so these environment variables never survive on their own — this script re-adds them automatically, but if you ever do a manual `dotnet publish` + copy instead, you have to redo this by hand (see Part 4.5 of the manual walkthrough).
+8. Rewrites `web.config`: `ASPNETCORE_ENVIRONMENT=Production` and the `ConnectionStrings__AtmosDb` secret in `<environmentVariables>`, plus `<remove name="WebDAVModule" />`/`<remove name="WebDAV" />` — **required if the IIS box has the WebDAV Publishing role service installed** (common under a default "Common HTTP Features" install): IIS's WebDAV module otherwise intercepts `PUT`/`DELETE` at the module level before your own handlers ever see them, silently breaking `PUT /api/recent/units` with IIS's own generic 405 page rather than anything from the app. **All of this matters on every redeploy**, not just the first one: `dotnet publish` regenerates `web.config` from scratch every time, so none of it survives on its own — this script re-adds it automatically, but if you ever do a manual `dotnet publish` + copy instead, you have to redo it by hand (see Part 4.5 of the manual walkthrough, and its WebDAV note).
 9. Creates the structured-log directory and the inbound firewall rule for the site's port.
 10. Starts the app pool and site, then **actually verifies it**: query-based checks that the database/login/schema exist, and a real `GET /healthz` request through IIS → Kestrel → SQL Server.
 
@@ -61,7 +61,9 @@ Follow [`docs/manual-deployment-walkthrough.md`](./docs/manual-deployment-walkth
 
 ## Current state
 
-As of the last update to this file, **both this project's lab VM deployment and its local Docker dev harness have been deliberately torn down** (validating the DELETE tooling above for real, not just via dry run) — see `docs/phase-c-build-environment.md`'s "Current state" section for exactly what's gone vs. what's still installed. Run `deploy-to-vm.sh --force` to bring the VM deployment back.
+This section goes stale the moment either environment is created or torn down again — treat it as a hint, not a fact, and check for real (`curl http://192.168.122.54:8080/healthz`, `docker ps -a --filter name=atmos-sql-dev`) before relying on it. See `docs/phase-c-build-environment.md`'s "Current state" section for the fuller, more frequently updated version of this.
+
+As of the last update to this file: the lab VM deployment is **up** (redeployed and verified as part of exercising this tooling for real); the local Docker dev harness is **torn down** (most recently exercised end-to-end — create, use, delete — and left down afterward). `deploy-to-vm.sh --force` / `dev-harness-create.sh` bring either back; `run-vm-teardown.sh --force` / `dev-harness-teardown.sh --force` tear either down.
 
 ---
 

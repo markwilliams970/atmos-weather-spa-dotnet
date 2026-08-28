@@ -8,14 +8,39 @@ This phase produced the actual solution/project skeleton (D1 territory per CLAUD
 
 ---
 
-## Current state (updated 2026-08-27 — read this before trusting anything below as "what's running")
+## Current state (updated 2026-08-28 — read this before trusting anything below as "what's running")
 
-Everything in this document past this point is a **historical record of Phase C's original, one-time setup** — accurate as a description of what was done and why, not a live status page. Since then, the lab environment described here has been fully formalized into idempotent scripts (`scripts/lab/dev-harness-create.sh`/`-teardown.sh` for the Docker dev harness, `scripts/lab/deploy-to-vm.sh` + `scripts/lab/vm-create.ps1`/`vm-teardown.ps1` for the VM deployment — see `docs/manual-deployment-walkthrough.md`'s appendix), and both the **local dev harness and the `win2025app` VM deployment were deliberately torn down** as part of validating that tooling's DELETE half for real, not just against a dry run. As of this writing, neither exists:
+Everything in this document past this point is a **historical record of Phase C's original, one-time setup** — accurate as a description of what was done and why, not a live status page. Since then, the lab environment described here has been fully formalized into idempotent scripts (`scripts/lab/dev-harness-create.sh`/`-teardown.sh` for the Docker dev harness, `scripts/lab/deploy-to-vm.sh` + `scripts/lab/vm-create.ps1`/`vm-teardown.ps1` for the VM deployment — see `docs/manual-deployment-walkthrough.md`'s appendix), and the **full create/delete lifecycle for both has now been exercised for real** (not just dry-run) — see Phase E below and each script's own commit history for what that surfaced and fixed.
 
-- The `atmos-sql-dev` container, `atmos-sql-dev-data` volume, and its `ConnectionStrings:AtmosDb` User Secrets entry are gone. Bring it back with `scripts/lab/dev-harness-create.sh`.
-- The `AtmosWeb` IIS site/app pool, the published files, the `AtmosDb` database, the `atmos_app` login, the `C:\ProgramData\atmos\logs` directory, and the "AtmosWeb HTTP 8080" firewall rule are all gone from `win2025app`. IIS and SQL Server *themselves* are still installed on the VM (never touched by the teardown) — only the app-specific pieces were removed. Redeploy with `scripts/lab/deploy-to-vm.sh --force`.
+**As of this writing:**
 
-Both create scripts were validated for real against this exact VM/harness (see their own commit history and comments) before the teardown, and the teardown itself was independently re-verified afterward (query-based checks, plus confirming the VM's HTTP endpoint stops responding at all) — including catching and fixing a same-process IIS-module caching bug that briefly made the app pool's removal look incomplete when it wasn't (see `vm-teardown.ps1`'s `Get-AppPoolInfo` comment for the full story).
+- **`win2025app` (the VM) is deployed and healthy** — `AtmosWeb` site/app pool running, `AtmosDb` database and `atmos_app` login present, `GET /healthz` returns `Healthy`. Redeploy with `scripts/lab/deploy-to-vm.sh --force` any time (idempotent); tear it down with `scripts/lab/run-vm-teardown.sh --force`.
+- **The local Docker dev harness is torn down.** Bring it back with `scripts/lab/dev-harness-create.sh`.
+
+Don't assume either state stays this way for long — both are routinely created and torn down as part of exercising this tooling. Check for real (`curl http://192.168.122.54:8080/healthz`, `docker ps -a --filter name=atmos-sql-dev`) rather than trusting this paragraph if it's been a while.
+
+## Phase E — what redeploying for real actually found
+
+Every one of vm-create.ps1's "already exists" idempotent redeploys had, by definition, never exercised its own from-scratch code paths — the VM already had everything from the original Phase C setup. Tearing the VM fully down and redeploying from nothing for Phase E (CLAUDE.md §23's checklist) ran those paths for the first time and surfaced four real, previously-undetected bugs, all fixed and re-verified via a subsequent clean redeploy:
+
+1. **The EF Core migration was silently applied to `master`, not `AtmosDb`.** `sqlcmd -S localhost -E -i migrate.sql` had no `-d` flag — `sqlcmd` with no `-d` connects using the admin login's own default database, and the idempotent migration script has no `USE` statement of its own. `sqlcmd` exits 0 and prints success regardless, so nothing *looked* wrong; only a query-based schema check inside `AtmosDb` specifically caught it. **The lesson generalizes past this project:** any `sqlcmd -E -i script.sql` invocation without an explicit `-d <database>` is trusting the connecting login's default database, silently — always pass `-d` unless that's genuinely what you want.
+2. **IIS start/stop timing races.** `Stop-WebAppPool`/`Stop-Website` returning doesn't mean `w3wp.exe` has actually released its file locks yet, and IIS's Windows Process Activation Service can transiently refuse a `Start-WebAppPool`/`Start-Website` call immediately after a `Stop` ("The service cannot accept control messages at this time"). Both are timing races IIS itself doesn't give you a clean "wait until ready" signal for — retrying with a short backoff is the practical fix (see `vm-create.ps1`'s `Invoke-WithRetry`).
+3. **The file-transfer bridge process leaked on every deploy** — a Linux/bash-side bug, not IIS: backgrounding `(cd "$WORKDIR" && python3 -m http.server ...) &` captures the *subshell's* PID, not python3's, so killing it left python3 running as an orphan; separately, a shared helper script's own `trap ... EXIT` silently clobbered the caller's trap (bash `EXIT` traps don't chain — a second one replaces the first). See `scripts/lab/_winrm-common.sh`'s `winrm_cleanup` comment for the fix.
+4. **IIS's WebDAV module silently blocked the app's one mutating endpoint, `PUT /api/recent/units`, on every deployment this project has ever done.** This is the one worth knowing even if you never touch this repo's scripts again: if an IIS box has the WebDAV Publishing role service installed (common under a default "Common HTTP Features" install), IIS's `WebDAVModule` intercepts `PUT`/`DELETE`/`PROPFIND`/etc. **at the module level, before handler selection even happens** — regardless of your own `aspNetCore` handler's `verb="*"`. The symptom is IIS's own generic 405 page, not anything from your app, which makes it easy to misdiagnose as an application bug. The fix is a `web.config` addition scoped to just that site:
+   ```xml
+   <system.webServer>
+     <modules>
+       <remove name="WebDAVModule" />
+     </modules>
+     <handlers>
+       <remove name="WebDAV" />
+       <!-- ... your existing handlers ... -->
+     </handlers>
+   </system.webServer>
+   ```
+   `vm-create.ps1` now injects exactly this on every deploy (`web.config` gets regenerated from scratch by `dotnet publish` each time, same reason the environment-variables step has to re-run too).
+
+A fifth bug, not IIS/SQL-specific, turned up running the same checklist's mobile-layout check: the mobile bottom nav had been **completely invisible at every viewport size** since it was built, due to a CSS specificity bug (an ID selector silently outranking the class selector meant to show it — see `site.css`'s comment at `.bottom-nav`). Worth knowing mainly as a reminder that "looks fine in the one viewport you always test at" and "actually works" are different claims.
 
 ---
 
@@ -76,7 +101,7 @@ Rather than deploying with `sa`, created a dedicated SQL login on the VM's SQL S
    - `GET http://192.168.122.54:8080/` → 200 (from both the VM itself and this workstation, confirming the new firewall rule for port 8080 works)
    - `GET http://192.168.122.54:8080/healthz` → `Healthy` — a `Microsoft.Extensions.Diagnostics.HealthChecks` endpoint added specifically to prove the **deployed, IIS-hosted app** can reach the VM's real SQL Server through `atmos_app`, not just that migrations could be applied out-of-band via `sqlcmd`.
 
-   This was this project's *first* proof this worked at all. A more complete, repeatable version of the same proof now exists as `scripts/lab/vm-create.ps1`'s own end-of-run verification report (query-based checks for the database/login/schema *and* the same live `/healthz` request) — see the "Current state" section above.
+   This was this project's *first* proof this worked at all. A more complete, repeatable version of the same proof now exists as `scripts/lab/vm-create.ps1`'s own end-of-run verification report (query-based checks for the database/login/schema *and* the same live `/healthz` request) — see the "Phase E" section above for what running that for real actually found.
 
 ---
 
