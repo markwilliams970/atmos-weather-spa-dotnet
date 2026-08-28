@@ -407,17 +407,30 @@ try {
 Write-Output ""
 
 # ---------------------------------------------------------------------------
-# 9. web.config: ASPNETCORE_ENVIRONMENT + the connection string secret.
-#    dotnet publish regenerates web.config from scratch every time (Step 6
-#    just overwrote it), so this always needs to be re-applied - see
-#    docs/logging.md's "Deployment note".
+# 9. web.config: ASPNETCORE_ENVIRONMENT + the connection string secret, and
+#    disabling the WebDAV module for this site. dotnet publish regenerates
+#    web.config from scratch every time (Step 6 just overwrote it), so all of
+#    this always needs to be re-applied - see docs/logging.md's "Deployment
+#    note" for the environment-variables half.
+#
+#    The WebDAV removal exists because this IIS install has the WebDAV
+#    Publishing role service present (common on a default "Common HTTP
+#    Features" install) - confirmed as a real, live bug during Phase E: IIS's
+#    WebDAVModule intercepts PUT/DELETE requests before they ever reach
+#    ANCM/Kestrel, regardless of the aspNetCore handler's own verb="*",
+#    returning IIS's own generic 405 page. This app's one mutating endpoint
+#    (PUT /api/recent/units) was silently broken on every deployment until
+#    this was added. <remove> here only affects this site/application, not
+#    the server-wide WebDAV installation other sites might actually be using.
 # ---------------------------------------------------------------------------
-Write-Output "--- web.config environment variables ---"
+Write-Output "--- web.config environment variables and WebDAV removal ---"
 try {
     $webConfigPath = Join-Path $PhysicalPath "web.config"
     [xml]$webConfig = Get-Content -Path $webConfigPath
+    $systemWebServerNode = $webConfig.SelectSingleNode("//system.webServer")
     $aspNetCoreNode = $webConfig.SelectSingleNode("//aspNetCore")
     if (-not $aspNetCoreNode) { throw "Could not find <aspNetCore> element in $webConfigPath" }
+    if (-not $systemWebServerNode) { throw "Could not find <system.webServer> element in $webConfigPath" }
 
     $existingEnvVars = $aspNetCoreNode.SelectSingleNode("environmentVariables")
     if ($existingEnvVars) { $aspNetCoreNode.RemoveChild($existingEnvVars) | Out-Null }
@@ -433,8 +446,24 @@ try {
     Add-EnvVarNode "ASPNETCORE_ENVIRONMENT" "Production"
     Add-EnvVarNode "ConnectionStrings__AtmosDb" $connectionString
     $aspNetCoreNode.AppendChild($envVarsNode) | Out-Null
+
+    $existingModules = $systemWebServerNode.SelectSingleNode("modules")
+    if ($existingModules) { $systemWebServerNode.RemoveChild($existingModules) | Out-Null }
+    $modulesNode = $webConfig.CreateElement("modules")
+    $removeModule = $webConfig.CreateElement("remove")
+    $removeModule.SetAttribute("name", "WebDAVModule")
+    $modulesNode.AppendChild($removeModule) | Out-Null
+    $systemWebServerNode.PrependChild($modulesNode) | Out-Null
+
+    $handlersNode = $systemWebServerNode.SelectSingleNode("handlers")
+    if ($handlersNode -and -not $handlersNode.SelectSingleNode("remove[@name='WebDAV']")) {
+        $removeHandler = $webConfig.CreateElement("remove")
+        $removeHandler.SetAttribute("name", "WebDAV")
+        $handlersNode.PrependChild($removeHandler) | Out-Null
+    }
+
     $webConfig.Save($webConfigPath)
-    Write-Output "web.config updated with ASPNETCORE_ENVIRONMENT and ConnectionStrings__AtmosDb."
+    Write-Output "web.config updated: ASPNETCORE_ENVIRONMENT, ConnectionStrings__AtmosDb, WebDAVModule removed."
 } catch {
     Write-Output "ERROR updating web.config: $($_.Exception.Message)"
 }
@@ -526,6 +555,25 @@ try {
     $healthDetail = $_.Exception.Message
 }
 Add-Result "End-to-end /healthz (IIS -> Kestrel -> SQL Server)" $healthOk $healthDetail
+
+# Confirms the WebDAV fix above actually took - IIS's WebDAVModule
+# intercepts PUT before ANCM/Kestrel ever sees it, independent of the
+# aspNetCore handler's own verb="*", and returns IIS's own 405 page. A
+# nonexistent label is deliberately used: UpdateUnitsAsync is a documented
+# no-op for an unknown label (mirrors the reference app), so this proves the
+# verb reaches the app without writing anything.
+$putOk = $false
+$putDetail = ""
+try {
+    $putResp = Invoke-WebRequest -Uri "http://localhost:$SitePort/api/recent/units" -Method PUT `
+        -Body '{"label":"__deploy-verification-sentinel__","units":"metric"}' -ContentType "application/json" `
+        -Headers @{ Origin = "http://localhost:$SitePort" } -UseBasicParsing -TimeoutSec 15
+    $putOk = ($putResp.StatusCode -eq 204)
+    $putDetail = "HTTP $($putResp.StatusCode)"
+} catch {
+    $putDetail = $_.Exception.Message
+}
+Add-Result "PUT /api/recent/units reaches the app (not blocked by WebDAV)" $putOk $putDetail
 
 Write-Output ""
 $results | Format-Table -AutoSize @{L='Artifact';E={$_.Artifact}}, @{L='OK?';E={if ($_.Ok) {'OK'} else {'FAILED'}}}, @{L='Detail';E={$_.Detail}}
