@@ -270,7 +270,14 @@ a { color: inherit; text-decoration: none; }
 .bnav-btn { flex: 1; height: 100%; border: none; background: transparent; color: var(--text-3); font-family: inherit; font-size: .6rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .2rem; cursor: pointer; }
 .bnav-btn.active { color: var(--accent); }
 .bnav-icon { font-size: 1.1rem; }
-#bottom-nav { display: none; }
+/* This #bottom-nav ID rule used to sit here duplicating "display: none" —
+   redundant against line 268's class rule, and actively harmful: an ID
+   selector always outranks a class selector regardless of source order, so
+   it permanently overrode the very next line's ".bottom-nav { display:
+   flex }" at every viewport width. The bottom nav was completely invisible
+   on mobile at any screen size until this was caught testing Phase E's
+   mobile-layout checklist item for real (getComputedStyle confirmed
+   display:none at 500px width, where CSS alone said it should be flex). */
 .bottom-nav { display: flex; }
 @media (min-width: 721px) { .bottom-nav { display: none; } }
 
